@@ -17,6 +17,35 @@ service cloud.firestore {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
     allow read: if isOwner(deviceId); allow update, delete: if false;
    }
+   match /callLogs/{callId} {
+    // Explicitly imported by the signed-in collector, never unrestricted writes.
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly([
+        'callId','deviceId','number','direction','callTimestamp',
+        'durationSeconds','sharedByUid','sharedAt','source','schemaVersion'
+      ])
+      && request.resource.data.keys().hasAll([
+        'callId','deviceId','number','direction','callTimestamp',
+        'durationSeconds','sharedByUid','sharedAt','source','schemaVersion'
+      ])
+      && request.resource.data.callId == callId
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.sharedByUid == request.auth.uid
+      && request.resource.data.source == 'USER_IMPORTED_CSV'
+      && request.resource.data.schemaVersion == 1
+      && request.resource.data.number is string
+      && request.resource.data.number.size() > 0
+      && request.resource.data.number.size() <= 48
+      && request.resource.data.direction in ['INCOMING','OUTGOING','MISSED','REJECTED','UNKNOWN']
+      && request.resource.data.callTimestamp is timestamp
+      && request.resource.data.callTimestamp <= request.time + duration.value(1, 'd')
+      && request.resource.data.durationSeconds is int
+      && request.resource.data.durationSeconds >= 0
+      && request.resource.data.durationSeconds <= 86400
+      && request.resource.data.sharedAt == request.time;
+    allow read: if isOwner(deviceId);
+    allow update, delete: if false;
+   }
   }
   match /{document=**} { allow read, write: if false; }
  }
