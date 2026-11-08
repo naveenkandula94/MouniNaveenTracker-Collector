@@ -65,7 +65,7 @@ private fun readSelectedCsv(context: android.content.Context, uri: Uri): List<Im
         while (true) {
             val line = reader.readLine() ?: break
             if (line.isBlank()) continue
-            require(records.size < 100) { "For safety, import at most 100 records per file." }
+            require(records.size < 12) { "For complete on-screen review, import at most 12 records per file." }
             require(line.length <= 4096) { "A CSV row is too long." }
             val parts = parseCsvLine(line)
             require(parts.size == 4) { "Each row needs exactly four columns." }
@@ -139,7 +139,7 @@ fun CallHistoryImport(
             if (calls.isNotEmpty()) {
                 Text("${calls.size} records loaded • ${chosen.size} selected", style = MaterialTheme.typography.titleMedium)
                 Text("Preview of selected file: $fileName", style = MaterialTheme.typography.bodySmall)
-                calls.take(12).forEachIndexed { index, call ->
+                calls.forEachIndexed { index, call ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Checkbox(
                             checked = index in chosen,
@@ -156,9 +156,6 @@ fun CallHistoryImport(
                             )
                         }
                     }
-                }
-                if (calls.size > 12) {
-                    Text("Only the first 12 rows are shown. For a full review, import a CSV with 12 or fewer records.", style = MaterialTheme.typography.bodySmall)
                 }
                 Row {
                     TextButton(onClick = { chosen = calls.indices.toSet(); approved = false }) { Text("Select all") }
