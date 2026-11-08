@@ -41,29 +41,20 @@ class MainActivity : ComponentActivity() {
                     Text("The Wedding of Mouni & Naveen", style = MaterialTheme.typography.headlineSmall)
                     Text("MouniNaveen Collector", style = MaterialTheme.typography.titleLarge)
                     Text("Privacy & sharing controls", style = MaterialTheme.typography.headlineSmall)
-                    Text("Sharing is voluntary, visible and can be withdrawn. No SMS or call-log permissions are requested.")
+                    Text("Sharing is voluntary and can be withdrawn. No SMS or call-log permissions are requested. Call records may be uploaded only through explicit CSV import and approval.")
                     Text("WHAT THIS APP SHARES", style = MaterialTheme.typography.titleMedium)
                     Text("• Device keyguard locked/unlocked events (when Android exposes them).\n• Event date/time and device timezone.\n• Random enrollment document ID and sync status.\n• No app activity tracking.")
                     Text("WHY AND WHERE", style = MaterialTheme.typography.titleMedium)
                     Text("Only lock/unlock transitions are sent to the MouniNaveenTracker Firebase project and may be viewed by the administrator who enrolled this device. Android can delay or omit these events; this is not real-time monitoring.")
                     Text("NOT COLLECTED", style = MaterialTheme.typography.titleMedium)
-                    Text("No app activity, SMS messages, call history, contacts, notification contents, passwords, camera, microphone, screenshots or private files are collected.")
+                    Text("No app activity, SMS messages, contacts, notification contents, passwords, camera, microphone, screenshots or private files are collected. Call records are shared only when you import and confirm them.")
                     Text("Android runs periodic sync no more frequently than approximately every 15 minutes; a manual sync request can be queued sooner but is not guaranteed instant. Data may use mobile data. You can stop sharing here at any time. Stopping prevents future collection/uploads; ask the administrator to delete records already uploaded.", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(enabled = !consent, onClick = { prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply(); consent = true; status = "Consent saved on this device. Sign in and grant Usage Access to start sync." }) { Text("I consent") }
                         OutlinedButton(onClick = { prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply(); consent = false; WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); status = "Sharing stopped. Future uploads are disabled. Previously uploaded records remain until deleted by the administrator." }) { Text("Stop sharing") }
                     }
                     HorizontalDivider()
-                    Text("Call history: user-controlled", style = MaterialTheme.typography.titleMedium)
-                    Text("Call history and SMS contents are not read or uploaded by this app. To share particular information, open your Phone or Messages app, select the record, and use Android\u2019s built-in Share action. You control the recipient and what is sent.")
-                    Text("Private sharing checklist: review recipients, remove sensitive details, then confirm in the Android share sheet.", style = MaterialTheme.typography.bodySmall)
-                    OutlinedButton(onClick = {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, "I am sharing information I have reviewed and selected myself.")
-                        }
-                        startActivity(Intent.createChooser(intent, "Choose how to share"))
-                    }) { Text("Open manual sharing") }
+                    CallHistoryImport(consentToSharing = consent, onStatus = { status = it })
                     HorizontalDivider()
                     Text("Android permission", style = MaterialTheme.typography.titleMedium)
                     Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
