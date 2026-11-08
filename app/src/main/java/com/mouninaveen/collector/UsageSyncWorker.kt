@@ -23,7 +23,8 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val db = FirebaseFirestore.getInstance()
             val devices = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
             if (devices.isEmpty) return Result.failure()
-            val device = devices.documents.first()
+            val device = devices.documents.firstOrNull { it.getBoolean("enabled") != false }
+                ?: return Result.success()
             val deviceId = device.id
             val now = System.currentTimeMillis()
             val from = prefs.getLong("last_sync", now - 24L * 60 * 60 * 1000).coerceAtMost(now - 60_000)
@@ -54,12 +55,12 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 batchRecords.add(id to record)
             }
             for (chunk in batchRecords.distinctBy { it.first }.chunked(400)) {
-                if (!prefs.getBoolean("consent", false)) return Result.success()
+                if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
                 val batch = db.batch()
                 chunk.forEach { (id, record) -> batch.set(db.collection("devices").document(deviceId).collection("usageEvents").document(id), record) }
                 batch.commit().await()
             }
-            if (!prefs.getBoolean("consent", false)) return Result.success()
+            if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
             device.reference.update(mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")).await()
             prefs.edit().putLong("last_sync", now).apply()
             Result.success()
