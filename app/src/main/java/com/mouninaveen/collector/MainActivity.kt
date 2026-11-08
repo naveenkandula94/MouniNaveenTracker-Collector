@@ -37,25 +37,24 @@ class MainActivity : ComponentActivity() {
                 var password by remember { mutableStateOf("") }
                 var status by remember { mutableStateOf("Review the disclosure and enable sharing only if you agree.") }
                 var busy by remember { mutableStateOf(false) }
-                var selectedPreview by remember { mutableStateOf("Usage events") }
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
                     Text("The Wedding of Mouni & Naveen", style = MaterialTheme.typography.headlineSmall)
                     Text("MouniNaveen Collector", style = MaterialTheme.typography.titleLarge)
                     Text("Privacy & sharing controls", style = MaterialTheme.typography.headlineSmall)
                     Text("Sharing is voluntary, visible and can be withdrawn. No SMS or call-log permissions are requested.")
                     Text("WHAT THIS APP SHARES", style = MaterialTheme.typography.titleMedium)
-                    Text("• App package name and app label when Android reports an app entering or leaving the foreground.\n• Event date/time and device timezone.\n• Screen lock/unlock events when Android exposes them.\n• A random enrollment document ID and sync status.")
+                    Text("• Device keyguard locked/unlocked events (when Android exposes them).\n• Event date/time and device timezone.\n• Random enrollment document ID and sync status.\n• No app activity tracking.")
                     Text("WHY AND WHERE", style = MaterialTheme.typography.titleMedium)
-                    Text("Records are sent to the MouniNaveenTracker Firebase project and can be viewed by the administrator who enrolled this device. Android may delay or omit events; this is not live screen monitoring.")
+                    Text("Only lock/unlock transitions are sent to the MouniNaveenTracker Firebase project and may be viewed by the administrator who enrolled this device. Android can delay or omit these events; this is not real-time monitoring.")
                     Text("NOT COLLECTED", style = MaterialTheme.typography.titleMedium)
-                    Text("No messages, notification contents, calls, contacts, keystrokes, passwords, microphone, camera, screenshots, screen recordings, photos, videos, documents or private app content are collected.")
-                    Text("Sync runs periodically when Android allows it. Data may use mobile data. You can stop sharing here at any time. Stopping prevents future collection/uploads; ask the administrator to delete records already uploaded.", style = MaterialTheme.typography.bodySmall)
+                    Text("No app activity, SMS messages, call history, contacts, notification contents, passwords, camera, microphone, screenshots or private files are collected.")
+                    Text("Android runs periodic sync no more frequently than approximately every 15 minutes; a manual sync request can be queued sooner but is not guaranteed instant. Data may use mobile data. You can stop sharing here at any time. Stopping prevents future collection/uploads; ask the administrator to delete records already uploaded.", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(enabled = !consent, onClick = { prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply(); consent = true; status = "Consent saved on this device. Sign in and grant Usage Access to start sync." }) { Text("I consent") }
                         OutlinedButton(onClick = { prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply(); consent = false; WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); status = "Sharing stopped. Future uploads are disabled. Previously uploaded records remain until deleted by the administrator." }) { Text("Stop sharing") }
                     }
                     HorizontalDivider()
-                    Text("Communication records", style = MaterialTheme.typography.titleMedium)
+                    Text("Call history: user-controlled", style = MaterialTheme.typography.titleMedium)
                     Text("Call history and SMS contents are not read or uploaded by this app. To share particular information, open your Phone or Messages app, select the record, and use Android\u2019s built-in Share action. You control the recipient and what is sent.")
                     Text("Private sharing checklist: review recipients, remove sensitive details, then confirm in the Android share sheet.", style = MaterialTheme.typography.bodySmall)
                     OutlinedButton(onClick = {
@@ -86,7 +85,7 @@ class MainActivity : ComponentActivity() {
                                         if (docs.isEmpty) status = "Signed in, but this account is not enrolled. Ask the administrator to add this Collector UID to a device."
                                         else if (docs.documents.none { it.getBoolean("enabled") != false }) status = "Enrollment is disabled by the administrator."
                                         else if (!hasUsageAccess(this@MainActivity)) status = "Signed in. Grant Usage Access to enable collection."
-                                        else { scheduleSync(); status = "Enrolled. Background usage sync is scheduled; Android may delay execution." }
+                                        else { scheduleSync(); status = "Enrolled. Lock/unlock sync is scheduled; Android may delay execution." }
                                     } catch (e: Exception) { status = "Enrollment check failed: ${e.localizedMessage ?: "Firestore access denied"}" }
                                 }
                             } else status = "Sign-in failed: ${task.exception?.localizedMessage ?: "Check account details"}"
@@ -104,7 +103,7 @@ class MainActivity : ComponentActivity() {
                     } else Text("Account status: Not signed in")
                     Text("Sharing: ${if (consent) "Consent given" else "Stopped / not consented"} · Usage Access: ${if (usageGranted) "Granted" else "Missing"}")
                     Text(status)
-                    Button(onClick = { usageGranted = hasUsageAccess(this@MainActivity); if (consent && auth.currentUser != null && usageGranted) { scheduleSync(); status = "Sync scheduled." } }) { Text("Refresh permission and sync status") }
+                    Button(onClick = { usageGranted = hasUsageAccess(this@MainActivity); if (consent && auth.currentUser != null && usageGranted) { scheduleSync(); status = "Lock/unlock sync queued. Android controls exact timing." } }) { Text("Refresh permission and sync status") }
                 }
             }
         }
