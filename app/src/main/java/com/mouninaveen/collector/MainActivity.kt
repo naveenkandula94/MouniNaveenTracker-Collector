@@ -37,9 +37,12 @@ class MainActivity : ComponentActivity() {
                 var password by remember { mutableStateOf("") }
                 var status by remember { mutableStateOf("Review the disclosure and enable sharing only if you agree.") }
                 var busy by remember { mutableStateOf(false) }
+                var selectedPreview by remember { mutableStateOf("Usage events") }
                 Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
                     Text("The Wedding of Mouni & Naveen", style = MaterialTheme.typography.headlineSmall)
                     Text("MouniNaveen Collector", style = MaterialTheme.typography.titleLarge)
+                    Text("Privacy & sharing controls", style = MaterialTheme.typography.headlineSmall)
+                    Text("Sharing is voluntary, visible and can be withdrawn. No SMS or call-log permissions are requested.")
                     Text("WHAT THIS APP SHARES", style = MaterialTheme.typography.titleMedium)
                     Text("• App package name and app label when Android reports an app entering or leaving the foreground.\n• Event date/time and device timezone.\n• Screen lock/unlock events when Android exposes them.\n• A random enrollment document ID and sync status.")
                     Text("WHY AND WHERE", style = MaterialTheme.typography.titleMedium)
@@ -51,6 +54,17 @@ class MainActivity : ComponentActivity() {
                         Button(enabled = !consent, onClick = { prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply(); consent = true; status = "Consent saved on this device. Sign in and grant Usage Access to start sync." }) { Text("I consent") }
                         OutlinedButton(onClick = { prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply(); consent = false; WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); status = "Sharing stopped. Future uploads are disabled. Previously uploaded records remain until deleted by the administrator." }) { Text("Stop sharing") }
                     }
+                    HorizontalDivider()
+                    Text("Communication records", style = MaterialTheme.typography.titleMedium)
+                    Text("Call history and SMS contents are not read or uploaded by this app. To share particular information, open your Phone or Messages app, select the record, and use Android\u2019s built-in Share action. You control the recipient and what is sent.")
+                    Text("Private sharing checklist: review recipients, remove sensitive details, then confirm in the Android share sheet.", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = {
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "I am sharing information I have reviewed and selected myself.")
+                        }
+                        startActivity(Intent.createChooser(intent, "Choose how to share"))
+                    }) { Text("Open manual sharing") }
                     HorizontalDivider()
                     Text("Android permission", style = MaterialTheme.typography.titleMedium)
                     Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
@@ -70,6 +84,7 @@ class MainActivity : ComponentActivity() {
                                         val uid = auth.currentUser?.uid ?: error("No authenticated user")
                                         val docs = FirebaseFirestore.getInstance().collection("devices").whereEqualTo("collectorUid", uid).get().await()
                                         if (docs.isEmpty) status = "Signed in, but this account is not enrolled. Ask the administrator to add this Collector UID to a device."
+                                        else if (docs.documents.none { it.getBoolean("enabled") != false }) status = "Enrollment is disabled by the administrator."
                                         else if (!hasUsageAccess(this@MainActivity)) status = "Signed in. Grant Usage Access to enable collection."
                                         else { scheduleSync(); status = "Enrolled. Background usage sync is scheduled; Android may delay execution." }
                                     } catch (e: Exception) { status = "Enrollment check failed: ${e.localizedMessage ?: "Firestore access denied"}" }
@@ -79,6 +94,12 @@ class MainActivity : ComponentActivity() {
                     }) { Text(if (busy) "Signing in…" else "Sign in") }
                     if (auth.currentUser != null) {
                         Text("Account status: Signed in (${auth.currentUser?.email ?: ""})")
+                        Text("Collector UID: ${auth.currentUser?.uid.orEmpty()}")
+                        OutlinedButton(onClick = {
+                            (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                                .setPrimaryClip(android.content.ClipData.newPlainText("Collector UID", auth.currentUser?.uid.orEmpty()))
+                            status = "Collector UID copied. Enroll this UID in the Admin app."
+                        }) { Text("Copy Collector UID") }
                         OutlinedButton(onClick = { WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); auth.signOut(); password = ""; status = "Signed out. Collection will not run until you sign in again." }) { Text("Sign out") }
                     } else Text("Account status: Not signed in")
                     Text("Sharing: ${if (consent) "Consent given" else "Stopped / not consented"} · Usage Access: ${if (usageGranted) "Granted" else "Missing"}")
