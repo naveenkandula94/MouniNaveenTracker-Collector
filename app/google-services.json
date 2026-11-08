@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "517746085301",
+    "project_id": "mouninaveentracker",
+    "storage_bucket": "mouninaveentracker.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:517746085301:android:faee6ccc40a7266a4e9dfc",
+        "android_client_info": {
+          "package_name": "com.mouninaveen.admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDf2lgOE-S4_WDdickzHG8vREvmac5SbUs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:517746085301:android:2f0dd3690953cdb04e9dfc",
+        "android_client_info": {
+          "package_name": "com.mouninaveen.collector"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDf2lgOE-S4_WDdickzHG8vREvmac5SbUs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

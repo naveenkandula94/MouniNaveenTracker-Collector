@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signedIn(){ return request.auth != null; }
+  function isAdmin(){ return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+  function deviceDoc(deviceId){ return get(/databases/$(database)/documents/devices/$(deviceId)); }
+  function isOwner(deviceId){ return signedIn() && exists(/databases/$(database)/documents/devices/$(deviceId)) && deviceDoc(deviceId).data.adminUid == request.auth.uid; }
+  function isCollector(deviceId){ return signedIn() && exists(/databases/$(database)/documents/devices/$(deviceId)) && deviceDoc(deviceId).data.collectorUid == request.auth.uid; }
+  match /admins/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
+  match /devices/{deviceId} {
+   allow read: if isOwner(deviceId) || isCollector(deviceId);
+   allow create: if isAdmin() && request.resource.data.adminUid == request.auth.uid && request.resource.data.collectorUid is string && request.resource.data.displayName is string && request.resource.data.keys().hasOnly(['adminUid','collectorUid','displayName','createdAt']);
+   allow update: if (isOwner(deviceId) && request.resource.data.adminUid == resource.data.adminUid && request.resource.data.collectorUid == resource.data.collectorUid) || (isCollector(deviceId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSyncAt','lastSyncStatus']));
+   allow delete: if isOwner(deviceId);
+   match /usageEvents/{eventId} {
+    allow create: if isCollector(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['APP_FOREGROUND','APP_BACKGROUND','SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
+    allow read: if isOwner(deviceId); allow update, delete: if false;
+   }
+  }
+  match /{document=**} { allow read, write: if false; }
+ }
+}
