@@ -14,7 +14,7 @@ service cloud.firestore {
    allow update: if (isOwner(deviceId) && request.resource.data.adminUid == resource.data.adminUid && request.resource.data.collectorUid == resource.data.collectorUid) || (isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSyncAt','lastSyncStatus']));
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
-    allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['APP_FOREGROUND','APP_BACKGROUND','SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
     allow read: if isOwner(deviceId); allow update, delete: if false;
    }
   }
