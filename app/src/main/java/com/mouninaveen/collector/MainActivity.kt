@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); render() }
-    override fun onResume() { super.onResume(); render() }
+    // Preserve Compose state when returning from the CSV picker or Android settings.
     private fun render() {
         val auth = FirebaseAuth.getInstance()
         setContent {
