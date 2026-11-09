@@ -42,7 +42,9 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             val database = FirebaseFirestore.getInstance()
             val target = database.collection("users").document(uid).collection("callBackups")
             val lastCallTime = prefs.getLong(LAST_CALL_DATE, 0L)
-            val since = if (lastCallTime == 0L) 0L else (lastCallTime - 2L * 24 * 60 * 60 * 1000).coerceAtLeast(0L)
+            // Re-check the newest timestamp for a possible late duration update,
+            // but never rescan a two-day window on every subsequent upload.
+            val since = lastCallTime
             var total = 0
             var newest = lastCallTime
             var batch = database.batch()
@@ -115,7 +117,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 .putInt(LAST_COUNT, total)
                 .putString(LAST_ERROR, "")
                 .apply()
-            CollectorDiagnostics.record(context, "BACKUP", "Private call backup completed; processed $total records.")
+            CollectorDiagnostics.record(context, "BACKUP", if (lastCallTime == 0L) "Initial private backup completed: $total records." else "Incremental backup checked $total recent records.")
             Result.success()
         } catch (e: SecurityException) {
             prefs.edit().putString(LAST_ERROR, "Android denied call-log access: ${e.localizedMessage}").apply()
