@@ -177,6 +177,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
         private const val ONE_TIME = "private-call-backup-now"
 
         fun schedule(context: Context, requestNow: Boolean = true) {
+            ProcessSyncObservers.refresh(context)
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (!prefs.getBoolean(ENABLED, false)) return
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
@@ -208,6 +209,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             val manager = WorkManager.getInstance(context)
             manager.cancelUniqueWork(PERIODIC)
             manager.cancelUniqueWork(ONE_TIME)
+            ProcessSyncObservers.refresh(context)
         }
     }
 }
