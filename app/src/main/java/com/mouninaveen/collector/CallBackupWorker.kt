@@ -32,9 +32,15 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val context = applicationContext
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(ENABLED, false) ||
-            !context.getSharedPreferences("collector", Context.MODE_PRIVATE).getBoolean("consent", false) ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED
-        ) return Result.success()
+            !context.getSharedPreferences("collector", Context.MODE_PRIVATE)
+                .getBoolean("consent", false)) return Result.success()
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) !=
+            PackageManager.PERMISSION_GRANTED) {
+            val reason = "Android READ_CALL_LOG is not granted or is restricted."
+            prefs.edit().putString(LAST_ERROR, reason).apply()
+            CollectorDiagnostics.record(context, "BACKUP", reason)
+            return Result.failure()
+        }
 
         val user = FirebaseAuth.getInstance().currentUser ?: return Result.retry()
         val uid = user.uid
@@ -125,6 +131,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             prefs.edit()
                 .putLong("${LAST_CALL_DATE}_$deviceId", newest)
                 .putLong(LAST_SUCCESS, System.currentTimeMillis())
+                .putLong("${LAST_SUCCESS}_$deviceId", System.currentTimeMillis())
                 .putInt(LAST_COUNT, total)
                 .putString(LAST_ERROR, "")
                 .apply()
