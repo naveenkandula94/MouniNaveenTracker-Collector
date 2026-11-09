@@ -28,6 +28,7 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
             PackageManager.PERMISSION_GRANTED) {
             prefs.edit().putString(LAST_ERROR,
                 "READ_SMS not granted. Android restricts SMS permission eligibility.").apply()
+            CollectorDiagnostics.record(context, "SMS", "Restricted READ_SMS not granted.")
             return Result.failure()
         }
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return Result.retry()
@@ -104,6 +105,7 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
             prefs.edit()
                 .putLong("${LAST_DATE}_$deviceId", newest)
                 .putLong(LAST_SUCCESS, System.currentTimeMillis())
+                .putLong("${LAST_SUCCESS}_$deviceId", System.currentTimeMillis())
                 .putInt(LAST_COUNT, processed)
                 .putString(LAST_ERROR, "")
                 .apply()
