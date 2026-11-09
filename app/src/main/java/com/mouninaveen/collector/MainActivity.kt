@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
         foregroundLockJob = lifecycleScope.launch {
             while (isActive) {
                 queueLockCheck()
-                delay(15_000L)
+                delay(60_000L)
             }
         }
     }
@@ -131,7 +131,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshCallBackupObserver()
         refreshSmsBackupObserver()
-        // While Personal_App is visible, check keyguard events every 15 seconds.
+        // While Personal_App is visible, check keyguard events every 60 seconds.
         // Android limits background WorkManager jobs to OS-managed timing.
         startForegroundLockChecks()
     }
@@ -216,7 +216,7 @@ class MainActivity : ComponentActivity() {
                 }
                 checkedAt = if (id == null) 0L else
                     prefs.getLong("last_heartbeat_$id", 0L)
-                delay(15_000L)
+                delay(60_000L)
             }
         }
 
@@ -308,14 +308,14 @@ class MainActivity : ComponentActivity() {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
-                                Text("Lock/unlock: automatic 15-second checks while the app is visible.")
+                                Text("Lock/unlock: automatic 60-second checks while the app is visible.")
                                 Text("Last Firebase status update: " +
                                     if (checkedAt > 0L)
                                         SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault())
                                             .format(Date(checkedAt))
                                     else "Not yet — check device selection and Usage Access"
                                 )
-                                Text("Background timing is controlled by Android; a locked phone cannot guarantee 15-second uploads.",
+                                Text("Background timing is controlled by Android; a locked phone cannot guarantee 60-second uploads.",
                                     style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = {
                                     usageGranted = hasUsageAccess(this@MainActivity)
