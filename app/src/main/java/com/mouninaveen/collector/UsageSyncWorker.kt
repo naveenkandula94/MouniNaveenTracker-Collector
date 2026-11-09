@@ -57,10 +57,27 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 batch.commit().await()
             }
             if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
-            device.reference.update(mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")).await()
+            val lastHeartbeat = prefs.getLong("last_heartbeat_$deviceId", 0L)
+            // Avoid excessive Firebase writes while performing inexpensive 15-second
+            // app-foreground checks. Heartbeat once per minute, or on a new event.
+            if (batchRecords.isNotEmpty() || now - lastHeartbeat >= 60_000L) {
+                device.reference.update(
+                    mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")
+                ).await()
+                prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
+            }
             prefs.edit().putLong("last_sync", now).apply()
+            if (batchRecords.isNotEmpty()) {
+                CollectorDiagnostics.record(
+                    applicationContext, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
+                )
+            }
             Result.success()
-        } catch (_: Exception) { Result.retry() }
+        } catch (e: Exception) {
+            CollectorDiagnostics.record(applicationContext, "LOCK",
+                "Lock sync failed: ${e.javaClass.simpleName}")
+            Result.retry()
+        }
     }
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 }
