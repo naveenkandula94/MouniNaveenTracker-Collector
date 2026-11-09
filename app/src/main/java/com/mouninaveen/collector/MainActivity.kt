@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
                         OutlinedButton(onClick = { prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply(); consent = false; WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); status = "Sharing stopped. Future uploads are disabled. Previously uploaded records remain until deleted by the administrator." }) { Text("Stop sharing") }
                     }
                     HorizontalDivider()
-                    LiveMicrophonePublisher(sharingEnabled = consent, onStatus = { status = it })
+                    LiveMicrophonePublisher(sharingEnabled = consent && auth.currentUser != null, onStatus = { status = it })
                     DeviceCallHistorySharing(consent = consent, onStatus = { status = it })
                     HorizontalDivider()
                     CallHistoryImport(consentToSharing = consent, onStatus = { status = it })
