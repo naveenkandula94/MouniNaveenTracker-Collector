@@ -186,8 +186,7 @@ internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
                 }) { Text("Check new messages") }
             }
             OutlinedButton(onClick = {
-                permitted = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS)
-                    == PackageManager.PERMISSION_GRANTED
+                permitted = (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED)
                 refresh++
             }) { Text("Refresh SMS permission and status") }
             TextButton(enabled = uid != null && deviceId != null && !busy,
