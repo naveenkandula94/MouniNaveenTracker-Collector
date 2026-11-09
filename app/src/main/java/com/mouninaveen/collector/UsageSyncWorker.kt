@@ -3,6 +3,7 @@ package com.mouninaveen.collector
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import androidx.work.ListenableWorker.Result
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.auth.FirebaseAuth
@@ -17,25 +18,44 @@ import java.util.Date
 import java.util.TimeZone
 
 class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result {
-        val prefs = applicationContext.getSharedPreferences("collector", Context.MODE_PRIVATE)
+    override suspend fun doWork(): Result = UsageSyncEngine.sync(applicationContext)
+}
+
+/**
+ * Shares exactly one Firebase sync implementation between immediate visible-app
+ * checks and durable WorkManager retries. No extra in-memory record queue.
+ */
+internal object UsageSyncEngine {
+    private val syncMutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun sync(context: Context): Result {
+        syncMutex.lock()
+        try {
+            return syncLocked(context)
+        } finally {
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncLocked(context: Context): Result {
+        val prefs = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("consent", false)) return Result.success()
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return Result.retry()
-        val selected = DeviceBinding.selectedId(applicationContext, uid)
+        val selected = DeviceBinding.selectedId(context, uid)
         if (selected == null) {
             prefs.edit().putString("last_lock_error",
                 "Choose this phone under Account to enable lock synchronization.").apply()
             return Result.failure()
         }
         prefs.edit().putLong("last_lock_attempt_$selected", System.currentTimeMillis()).apply()
-        if (!hasUsageAccess(applicationContext)) {
+        if (!hasUsageAccess(context)) {
             prefs.edit().putString("last_lock_error",
                 "Android Usage Access is off. Enable it under Access > Screen lock events.").apply()
             return Result.failure()
         }
         return try {
             val db = FirebaseFirestore.getInstance()
-            val device = DeviceBinding.resolve(applicationContext, uid)
+            val device = DeviceBinding.resolve(context, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
             // Different phones share a Firebase UID, but never share an event cursor.
@@ -45,7 +65,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val lastSuccess = prefs.getLong(cursorKey, 0L)
             val from = if (lastSuccess == 0L) now - 7L * 24 * 60 * 60 * 1000
                        else (lastSuccess - 60_000L).coerceAtMost(now - 60_000L)
-            val manager = applicationContext.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val events = manager.queryEvents(from, now)
             val event = UsageEvents.Event()
             val batchRecords = mutableListOf<Pair<String, Map<String, Any>>>()
@@ -78,8 +98,8 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             }
             if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
             val lastHeartbeat = prefs.getLong("last_heartbeat_$deviceId", 0L)
-            // Avoid excessive Firebase writes while performing inexpensive 15-second
-            // app-foreground checks. Heartbeat once per minute, or on a new event.
+            // Avoid excess writes. The foreground checks run once per minute.
+            // Heartbeat once per minute, or on a new event.
             if (batchRecords.isNotEmpty() || now - lastHeartbeat >= 60_000L) {
                 withTimeout(30_000L) {
                     device.reference.update(
@@ -94,14 +114,14 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             if (batchRecords.isEmpty() &&
                 now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
                 CollectorDiagnostics.record(
-                    applicationContext, "LOCK",
+                    context, "LOCK",
                     "Checked Usage Access: no new Android keyguard events were exposed."
                 )
                 prefs.edit().putLong("last_no_event_log_$deviceId", now).apply()
             }
             if (batchRecords.isNotEmpty()) {
                 CollectorDiagnostics.record(
-                    applicationContext, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
+                    context, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
                 )
                 try {
                     device.reference.collection("syncLogs").add(
@@ -114,7 +134,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                     ).await()
                 } catch (_: Exception) {
                     CollectorDiagnostics.record(
-                        applicationContext, "LOCK", "Lock events uploaded; remote diagnostic log not available."
+                        context, "LOCK", "Lock events uploaded; remote diagnostic log not available."
                     )
                 }
             }
@@ -122,7 +142,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         } catch (e: TimeoutCancellationException) {
             val reason = "Lock sync timed out waiting for Firebase. Check internet and Firestore rules."
             prefs.edit().putString("last_lock_error", reason).apply()
-            CollectorDiagnostics.record(applicationContext, "LOCK", reason)
+            CollectorDiagnostics.record(context, "LOCK", reason)
             Result.retry()
         } catch (e: CancellationException) {
             // WorkManager cancelled an old check. Do not record a false Firebase error.
@@ -130,7 +150,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         } catch (e: Exception) {
             val reason = "Lock sync failed (${e.javaClass.simpleName}): ${e.localizedMessage?.take(160) ?: "Unknown error"}"
             prefs.edit().putString("last_lock_error", reason).apply()
-            CollectorDiagnostics.record(applicationContext, "LOCK", reason)
+            CollectorDiagnostics.record(context, "LOCK", reason)
             Result.retry()
         }
     }
