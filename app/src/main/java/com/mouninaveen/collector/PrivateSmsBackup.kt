@@ -15,6 +15,8 @@ import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
@@ -26,7 +28,8 @@ import java.util.Locale
 internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
     val context = LocalContext.current
     val auth = remember { FirebaseAuth.getInstance() }
-    val scope = rememberCoroutineScope()
+    // Owner-approved operations survive tab navigation instead of being cancelled.
+    val scope = (context as MainActivity).lifecycleScope
     val prefs = remember {
         context.getSharedPreferences(SmsBackupWorker.PREFS, Context.MODE_PRIVATE)
     }
@@ -65,6 +68,8 @@ internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
                 SmsBackupWorker.schedule(context)
                 (context as? MainActivity)?.refreshSmsBackupObserver()
                 onStatus("Private SMS backup enabled for ${device.getString("displayName") ?: "selected phone"}.")
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 onStatus("Choose this phone in Account first: ${e.localizedMessage}")
             } finally { busy = false }
