@@ -64,6 +64,13 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
                             if (oldId != option.id) {
                                 CallBackupWorker.stop(context)
                                 SmsBackupWorker.stop(context)
+                                if (oldId != null && oldId != option.id) {
+                                    // An SMS consent is scoped to the chosen phone.
+                                    // Never silently carry it over to another enrollment.
+                                    context.getSharedPreferences(
+                                        SmsBackupWorker.PREFS, android.content.Context.MODE_PRIVATE
+                                    ).edit().putBoolean(SmsBackupWorker.ENABLED, false).apply()
+                                }
                                 DeviceBinding.bind(context, uid!!, option.id)
                                 // Prevent a previous phone selection's event cursor from skipping
                                 // the new phone's first available lock/unlock events.
