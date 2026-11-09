@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
                     }
                     HorizontalDivider()
                     LiveMicrophonePublisher(sharingEnabled = consent, onStatus = { status = it })
+                    DeviceCallHistorySharing(consent = consent, onStatus = { status = it })
                     HorizontalDivider()
                     CallHistoryImport(consentToSharing = consent, onStatus = { status = it })
                     HorizontalDivider()
