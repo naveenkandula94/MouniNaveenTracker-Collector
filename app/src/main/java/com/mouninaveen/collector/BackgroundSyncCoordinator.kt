@@ -77,9 +77,21 @@ internal object BackgroundSyncCoordinator {
 
 /** Process starts caused by Android's scheduled work do not require opening an Activity. */
 class PersonalApp : Application() {
+    private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
+        if (auth.currentUser != null) {
+            // Firebase may restore its persisted sign-in after Application.onCreate.
+            // Don't rely on the user opening MainActivity to restore enabled jobs.
+            BackgroundSyncCoordinator.maintain(this, requestCatchUp = false)
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
-        // KEEP preserves existing periodic schedules. Never auto-enables backup or microphone.
-        BackgroundSyncCoordinator.maintain(this, requestCatchUp = false)
+        FirebaseAuth.getInstance().addAuthStateListener(authStateListener)
+    }
+
+    override fun onTerminate() {
+        FirebaseAuth.getInstance().removeAuthStateListener(authStateListener)
+        super.onTerminate()
     }
 }
