@@ -31,11 +31,10 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
                     .whereEqualTo("collectorUid", uid).get().await().documents
                     .filter { it.getBoolean("enabled") != false }
                 options = docs.map { Enrollment(it.id, it.getString("displayName") ?: "Android phone") }
-                if (selected == null && options.size == 1) {
-                    DeviceBinding.bind(context, uid, options.first().id)
-                    selected = options.first().id
+                if (selected != null && options.none { it.id == selected }) {
+                    selected = null
                 }
-                onStatus("Found ${options.size} active phone enrollment(s).")
+                onStatus(if (selected == null) "Choose THIS phone manually from the available enrollments." else "Phone selection verified. ${options.size} enrollment(s) available.")
             } catch (e: Exception) {
                 onStatus("Phone enrollment check failed: ${e.localizedMessage}")
             } finally { busy = false }
@@ -46,7 +45,7 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text("This phone", style = MaterialTheme.typography.titleLarge)
-            Text("Choose the correct phone for this installation. This prevents two phones using the same Firebase UID from mixing calls and activity.",
+            Text("Required: tap Use this phone on the correct device. No phone will be selected automatically. Your choice is saved for this installation.",
                 style = MaterialTheme.typography.bodySmall)
             if (options.isEmpty()) {
                 Text("No enrollments loaded. Add a device in Admin_App > Settings, then refresh.")
@@ -65,12 +64,17 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
                             if (oldId != option.id) {
                                 CallBackupWorker.stop(context)
                                 DeviceBinding.bind(context, uid!!, option.id)
+                                // Prevent a previous phone selection's event cursor from skipping
+                                // the new phone's first available lock/unlock events.
+                                context.getSharedPreferences("collector", android.content.Context.MODE_PRIVATE)
+                                    .edit().remove("last_sync").apply()
                                 selected = option.id
+                                (context as? MainActivity)?.scheduleSync()
                                 if (context.getSharedPreferences(CallBackupWorker.PREFS, android.content.Context.MODE_PRIVATE)
                                         .getBoolean(CallBackupWorker.ENABLED, false)) {
                                     CallBackupWorker.schedule(context)
                                 }
-                                onStatus("This phone is now linked to ${option.name}. Future backups are separated by device.")
+                                onStatus("Selected ${option.name}. Automatic lock/unlock and private call backup now use this phone only.")
                             }
                         }
                     ) { Text(if (selected == option.id) "Selected" else "Use this phone") }
