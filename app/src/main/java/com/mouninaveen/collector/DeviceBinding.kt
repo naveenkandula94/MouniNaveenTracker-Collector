@@ -31,12 +31,10 @@ internal object DeviceBinding {
             .filter { it.getBoolean("enabled") != false }
         check(docs.isNotEmpty()) { "No active enrollment. Add this phone in Admin settings." }
         val selected = selectedId(context, uid)
-        val found = docs.firstOrNull { it.id == selected }
-        if (found != null) return found
-        check(docs.size == 1) {
-            "Multiple phones share this account. Open Personal_App > Account and select THIS phone before syncing."
+        check(selected != null) {
+            "Select this phone manually in Personal_App > Account > This phone before syncing."
         }
-        bind(context, uid, docs.first().id)
-        return docs.first()
+        return docs.firstOrNull { it.id == selected }
+            ?: error("Selected phone is not actively enrolled. Choose a valid device in Account.")
     }
 }
