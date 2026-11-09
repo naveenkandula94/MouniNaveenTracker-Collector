@@ -75,6 +75,9 @@ class MicrophoneStreamService : Service() {
     private var isStarted = false
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
+    private var startJob: Job? = null
+    private var offerWatchdogJob: Job? = null
+    private var offerPublished = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -139,7 +142,7 @@ class MicrophoneStreamService : Service() {
                     isStarted = true
                     MicStreamStatus.set(MicStreamState(active = true, starting = true,
                         status = "Starting owner-approved microphone sharing…"))
-                    scope.launch { startSession() }
+                    startJob = scope.launch { startSession() }
                     scope.launch { monitorOwnerConsent() }
                 } catch (e: Exception) {
                     MicStreamStatus.status("Unable to start a visible microphone service: ${e.localizedMessage}")
@@ -185,6 +188,8 @@ class MicrophoneStreamService : Service() {
     private fun clearCurrentPeer() {
         registrations.forEach { it.remove() }
         registrations = emptyList()
+        offerWatchdogJob?.cancel()
+        offerWatchdogJob = null
         sessionPeer?.close()
         sessionPeer = null
         sessionRef?.update(
@@ -195,22 +200,30 @@ class MicrophoneStreamService : Service() {
 
     private suspend fun startSession() {
         val generation = ++sessionId
+        offerPublished = false
         try {
+            MicStreamStatus.status("Verifying the selected phone and Firebase login…")
             val uid = FirebaseAuth.getInstance().currentUser?.uid
                 ?: error("Sign in to Personal_App before starting the microphone.")
             val consent = getSharedPreferences("collector", MODE_PRIVATE)
                 .getBoolean("consent", false)
             check(consent) { "Sharing has been disabled by the owner." }
-            val device = DeviceBinding.resolve(this, uid)
+            val device = withTimeout(20_000L) { DeviceBinding.resolve(this@MicrophoneStreamService, uid) }
+            check(isStarted && generation == sessionId) { "Microphone session stopped." }
             streamOwnerUid = uid
             streamDeviceId = device.id
             val ref = device.reference.collection("liveAudio").document()
-            ref.set(mapOf(
-                "collectorUid" to uid,
-                "deviceId" to device.id,
-                "status" to "STARTING",
-                "createdAt" to FieldValue.serverTimestamp()
-            )).await()
+            MicStreamStatus.status("Registering microphone session in Firebase…")
+            // Firestore writes may wait indefinitely while offline. Never show
+            // a false 'active' state if the remote offer is not registered.
+            withTimeout(20_000L) {
+                ref.set(mapOf(
+                    "collectorUid" to uid,
+                    "deviceId" to device.id,
+                    "status" to "STARTING",
+                    "createdAt" to FieldValue.serverTimestamp()
+                )).await()
+            }
 
             if (!isStarted || generation != sessionId) {
                 ref.update("status", "ENDED", "endedAt", FieldValue.serverTimestamp())
@@ -234,6 +247,7 @@ class MicrophoneStreamService : Service() {
                 }
             )
             sessionPeer = peer
+            MicStreamStatus.status("Creating a secure microphone offer…")
             var appliedAnswer = false
             val answerListener = ref.addSnapshotListener { snapshot, error ->
                 if (!isStarted || generation != sessionId) return@addSnapshotListener
@@ -270,17 +284,36 @@ class MicrophoneStreamService : Service() {
             peer.createOffer { offer ->
                 if (isStarted && generation == sessionId) {
                     ref.update("offer", offer, "status", "OFFERED")
+                        .addOnSuccessListener {
+                            if (isStarted && generation == sessionId) {
+                                offerPublished = true
+                                MicStreamStatus.set(MicStreamState(
+                                    active = true, starting = false,
+                                    status = "Microphone offer ready for ${device.getString("displayName") ?: "this phone"}. Open Admin > Live and tap Listen now."
+                                ))
+                                CollectorDiagnostics.record(this, "AUDIO",
+                                    "Microphone offer published for selected enrollment.")
+                            }
+                        }
                         .addOnFailureListener { error ->
-                            MicStreamStatus.status(
-                                "Could not publish microphone offer: ${error.localizedMessage}"
-                            )
+                            if (isStarted && generation == sessionId) {
+                                val reason = "Could not publish microphone offer: ${error.localizedMessage}"
+                                CollectorDiagnostics.record(this, "AUDIO", reason)
+                                endSession(reason)
+                                stopSelf()
+                            }
                         }
                 }
             }
-            MicStreamStatus.set(MicStreamState(
-                active = true, starting = false,
-                status = "Microphone active. Switch apps or lock screen; notification shows Stop."
-            ))
+            offerWatchdogJob = scope.launch {
+                delay(25_000L)
+                if (isStarted && generation == sessionId && !offerPublished) {
+                    val reason = "Microphone offer was not published within 25 seconds. Check internet, selected phone and published Firestore rules."
+                    CollectorDiagnostics.record(this@MicrophoneStreamService, "AUDIO", reason)
+                    endSession(reason)
+                    stopSelf()
+                }
+            }
             CollectorDiagnostics.record(this, "AUDIO",
                 "User-started foreground microphone session, phone-specific and visible.")
 
@@ -291,11 +324,23 @@ class MicrophoneStreamService : Service() {
                     delay(250L)
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            if (isStarted && generation == sessionId) {
+                val reason = "Firebase connection timed out. Check internet and deploy the matching Firestore rules."
+                CollectorDiagnostics.record(this, "AUDIO", reason)
+                endSession(reason)
+                stopSelf()
+            }
+        } catch (_: CancellationException) {
+            // Expected when the phone owner presses Stop during a pending Firebase write.
+            // Never report this as a broken microphone.
         } catch (e: Exception) {
-            val reason = "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
-            CollectorDiagnostics.record(this, "AUDIO", reason)
-            endSession(reason)
-            stopSelf()
+            if (isStarted && generation == sessionId) {
+                val reason = "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+                CollectorDiagnostics.record(this, "AUDIO", reason)
+                endSession(reason)
+                stopSelf()
+            }
         }
     }
 
@@ -321,6 +366,8 @@ class MicrophoneStreamService : Service() {
         sessionId++
         reconnectJob?.cancel()
         reconnectJob = null
+        startJob?.cancel()
+        startJob = null
         clearCurrentPeer()
         streamOwnerUid = null
         streamDeviceId = null
