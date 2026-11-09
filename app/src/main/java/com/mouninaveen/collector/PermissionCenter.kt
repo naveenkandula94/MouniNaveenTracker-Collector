@@ -71,7 +71,17 @@ internal fun PermissionCenter(
         SmsBackupWorker.ENABLED, false
     ) && smsPrefs.getString(SmsBackupWorker.OWNER, null) == uid
     val connected = uid != null && deviceId != null
-    val active = MicStreamStatus.state.collectAsState().value.active
+    val micStream = MicStreamStatus.state.collectAsState().value
+    val active = micStream.active
+    val callLastSuccess = if (deviceId == null) 0L else callPrefs.getLong(
+        "${CallBackupWorker.LAST_SUCCESS}_$deviceId", 0L
+    )
+    val smsLastSuccess = if (deviceId == null) 0L else smsPrefs.getLong(
+        "${SmsBackupWorker.LAST_SUCCESS}_$deviceId", 0L
+    )
+    val lockLastSuccess = if (deviceId == null) 0L else basePrefs.getLong(
+        "last_heartbeat_$deviceId", 0L
+    )
 
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
@@ -110,9 +120,9 @@ internal fun PermissionCenter(
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("${listOf(connected, sharing, usage, phoneGranted && callEnabled,
-                    smsGranted && smsEnabled, micGranted, noticeGranted).count { it }} of 7 ready",
+                    smsGranted && smsEnabled, micGranted, noticeGranted).count { it }} of 7 permissions configured",
                     style = MaterialTheme.typography.titleLarge)
-                Text("Each feature remains under your control.",
+                Text("Access configured does not mean Firebase sync succeeded. Check the timestamps and errors below.",
                     style = MaterialTheme.typography.bodyMedium)
                 Button(modifier = Modifier.fillMaxWidth(), onClick = { confirm = true }) {
                     Text("Set up / review access")
@@ -136,7 +146,7 @@ internal fun PermissionCenter(
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(title, style = MaterialTheme.typography.titleMedium)
                         Text(detail, style = MaterialTheme.typography.bodySmall)
-                        Text(if (ok) "● Ready" else "○ Action needed",
+                        Text(if (ok) "● Configured" else "○ Action needed",
                             color = if (ok) Color(0xFF11866D) else Color(0xFFA15A17),
                             style = MaterialTheme.typography.labelMedium)
                     }
@@ -152,22 +162,27 @@ internal fun PermissionCenter(
             if (sharing) "Enabled" else "Disabled",
             sharing, "Review", { confirm = true })
         statusRow("Screen lock events",
-            if (usage) "Android Usage Access granted" else "Grant Usage Access in Settings",
+            if (usage && lockLastSuccess == 0L) "Usage Access granted · No successful cloud sync yet"
+            else if (usage) "Last successful check: ${SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()).format(Date(lockLastSuccess))}"
+            else "Grant Usage Access in Settings",
             usage && sharing && connected, "Settings", {
                 context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
             })
         statusRow("Phone call backup",
-            if (callEnabled && phoneGranted) "Backup on · Android access granted"
+            if (callEnabled && phoneGranted && callLastSuccess == 0L) "Enabled · waiting for first successful Firebase backup"
+            else if (callEnabled && phoneGranted) "Backup enabled · last sync succeeded"
             else if (!phoneGranted) "Phone permission not granted or restricted"
             else "Backup not enabled",
             callEnabled && phoneGranted && connected, "Calls", onOpenCalls)
         statusRow("SMS backup",
-            if (smsEnabled && smsGranted) "Backup on · Android access granted"
+            if (smsEnabled && smsGranted && smsLastSuccess == 0L) "Enabled · waiting for first successful Firebase backup"
+            else if (smsEnabled && smsGranted) "Backup enabled · last sync succeeded"
             else if (!smsGranted) "SMS permission not granted or restricted"
             else "Backup not enabled",
             smsEnabled && smsGranted && connected, "SMS", onOpenMessages)
         statusRow("Microphone",
-            if (active) "An owner-started live session is active"
+            if (active && micStream.starting) "Preparing microphone offer · Not connected to Admin yet"
+            else if (active) "Owner-started microphone offer published"
             else if (micGranted) "Permission granted · Session stopped"
             else "Grant permission when starting a session",
             micGranted, "Live", onOpenLive)
@@ -236,7 +251,7 @@ internal fun PermissionCenter(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(enabled = connected && sharing, onClick = {
                         BackgroundSyncCoordinator.syncNow(context)
-                        onStatus("Scheduled an incremental catch-up for enabled backups.")
+                        onStatus("Immediate lock, call and SMS checks requested. Refresh to see results/errors.")
                     }) { Text("Check sync now") }
                     TextButton(onClick = { refresh++ }) { Text("Refresh") }
                 }
