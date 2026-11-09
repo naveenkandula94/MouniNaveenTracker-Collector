@@ -9,13 +9,110 @@ service cloud.firestore {
   function enrollmentActive(deviceId){ return !(deviceDoc(deviceId).data.get("enabled", true) == false); }
   match /admins/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
   match /devices/{deviceId} {
-   allow read: if isOwner(deviceId) || isCollector(deviceId);
+   // Queries must be provably scoped by adminUid or collectorUid; read is not a query filter.
+   allow get: if isOwner(deviceId) || isCollector(deviceId);
+   allow list: if signedIn() && (resource.data.adminUid == request.auth.uid || resource.data.collectorUid == request.auth.uid);
    allow create: if isAdmin() && request.resource.data.adminUid == request.auth.uid && request.resource.data.collectorUid is string && request.resource.data.displayName is string && request.resource.data.keys().hasOnly(['adminUid','collectorUid','displayName','createdAt']);
    allow update: if (isOwner(deviceId) && request.resource.data.adminUid == resource.data.adminUid && request.resource.data.collectorUid == resource.data.collectorUid) || (isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSyncAt','lastSyncStatus']));
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
-    allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['APP_FOREGROUND','APP_BACKGROUND','SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
     allow read: if isOwner(deviceId); allow update, delete: if false;
+   }
+   match /callLogs/{callId} {
+    // Explicitly imported by the signed-in collector, never unrestricted writes.
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly([
+        'callId','deviceId','number','direction','callTimestamp',
+        'durationSeconds','sharedByUid','sharedAt','source','schemaVersion'
+      ])
+      && request.resource.data.keys().hasAll([
+        'callId','deviceId','number','direction','callTimestamp',
+        'durationSeconds','sharedByUid','sharedAt','source','schemaVersion'
+      ])
+      && request.resource.data.callId == callId
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.sharedByUid == request.auth.uid
+      && request.resource.data.source in ['USER_IMPORTED_CSV','USER_APPROVED_DEVICE_CALL_LOG']
+      && request.resource.data.schemaVersion == 1
+      && request.resource.data.number is string
+      && request.resource.data.number.size() > 0
+      && request.resource.data.number.size() <= 48
+      && request.resource.data.direction in ['INCOMING','OUTGOING','MISSED','REJECTED','UNKNOWN']
+      && request.resource.data.callTimestamp is timestamp
+      && request.resource.data.callTimestamp <= request.time + duration.value(1, 'd')
+      && request.resource.data.durationSeconds is int
+      && request.resource.data.durationSeconds >= 0
+      && request.resource.data.durationSeconds <= 86400
+      && request.resource.data.sharedAt == request.time;
+    allow read, delete: if isOwner(deviceId);
+    allow update: if false;
+   }
+   match /liveAudio/{sessionId} {
+    allow read: if isOwner(deviceId) || isCollector(deviceId);
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly(['collectorUid','deviceId','status','createdAt'])
+      && request.resource.data.keys().hasAll(['collectorUid','deviceId','status','createdAt'])
+      && request.resource.data.collectorUid == request.auth.uid
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.status == 'STARTING'
+      && request.resource.data.createdAt == request.time;
+    allow update: if
+      (isCollector(deviceId) && enrollmentActive(deviceId)
+       && request.resource.data.collectorUid == resource.data.collectorUid
+       && request.resource.data.deviceId == resource.data.deviceId
+       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer','status','endedAt'])
+       && request.resource.data.status in ['OFFERED','ENDED'])
+      ||
+      (isOwner(deviceId)
+       && request.resource.data.collectorUid == resource.data.collectorUid
+       && request.resource.data.deviceId == resource.data.deviceId
+       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer','status'])
+       && resource.data.status == 'OFFERED'
+       && request.resource.data.status == 'ANSWERED');
+    allow delete: if false;
+    match /publisherIce/{candidateId} {
+     allow read: if isOwner(deviceId) || isCollector(deviceId);
+     allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+       && request.resource.data.keys().hasOnly(['sdp','mid','line'])
+       && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
+     allow update, delete: if false;
+    }
+    match /listenerIce/{candidateId} {
+     allow read: if isOwner(deviceId) || isCollector(deviceId);
+     allow create: if isOwner(deviceId)
+       && request.resource.data.keys().hasOnly(['sdp','mid','line'])
+       && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
+     allow update, delete: if false;
+    }
+   }
+  }
+  // Private owner-controlled backup: separate from enrolled devices and Admin dashboards.
+  match /users/{uid} {
+   allow get: if request.auth != null && request.auth.uid == uid;
+   allow list, create, update, delete: if false;
+   match /callBackups/{callId} {
+    allow get, list, delete: if request.auth != null && request.auth.uid == uid;
+    allow create, update: if request.auth != null && request.auth.uid == uid
+     && request.resource.data.keys().hasOnly([
+       'callId','ownerUid','number','direction','callTimestamp','durationSeconds','source','schemaVersion'
+     ])
+     && request.resource.data.keys().hasAll([
+       'callId','ownerUid','number','direction','callTimestamp','durationSeconds','source','schemaVersion'
+     ])
+     && request.resource.data.callId == callId
+     && request.resource.data.ownerUid == uid
+     && request.resource.data.source == 'OWNER_PRIVATE_BACKUP'
+     && request.resource.data.schemaVersion == 1
+     && request.resource.data.number is string
+     && request.resource.data.number.size() > 0
+     && request.resource.data.number.size() <= 48
+     && request.resource.data.direction in ['INCOMING','OUTGOING','MISSED','REJECTED','UNKNOWN']
+     && request.resource.data.callTimestamp is timestamp
+     && request.resource.data.callTimestamp <= request.time + duration.value(1, 'd')
+     && request.resource.data.durationSeconds is int
+     && request.resource.data.durationSeconds >= 0
+     && request.resource.data.durationSeconds <= 86400;
    }
   }
   match /{document=**} { allow read, write: if false; }
