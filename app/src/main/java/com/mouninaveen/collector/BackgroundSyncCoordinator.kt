@@ -66,14 +66,45 @@ internal object BackgroundSyncCoordinator {
         }
     }
 
+    /**
+     * Explicit owner-requested check. A separate one-time request cannot be
+     * blocked by an old, still-retrying automatic KEEP request. This never
+     * triggers microphone capture or changes a permission.
+     */
     fun syncNow(context: Context) {
-        maintain(context, requestCatchUp = true)
+        maintain(context, requestCatchUp = false)
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (!context.getSharedPreferences("collector", Context.MODE_PRIVATE)
+                .getBoolean("consent", false) ||
+            DeviceBinding.selectedId(context, uid) == null) return
+        if (hasUsageAccess(context)) {
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED).build()
+            WorkManager.getInstance(context).enqueueUniqueWork(
+                "lock-check-manual", ExistingWorkPolicy.REPLACE,
+                OneTimeWorkRequestBuilder<UsageSyncWorker>()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                    .build()
+            )
+        }
+        val calls = context.getSharedPreferences(CallBackupWorker.PREFS, Context.MODE_PRIVATE)
+        if (calls.getBoolean(CallBackupWorker.ENABLED, false) &&
+            calls.getString(CallBackupWorker.OWNER, null) == uid) {
+            CallBackupWorker.trigger(context)
+        }
+        val sms = context.getSharedPreferences(SmsBackupWorker.PREFS, Context.MODE_PRIVATE)
+        if (sms.getBoolean(SmsBackupWorker.ENABLED, false) &&
+            sms.getString(SmsBackupWorker.OWNER, null) == uid) {
+            SmsBackupWorker.trigger(context)
+        }
     }
 
     fun stopAll(context: Context) {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(LOCK_WORK)
         wm.cancelUniqueWork("lock-check-auto")
+        wm.cancelUniqueWork("lock-check-manual")
         CallBackupWorker.stop(context)
         SmsBackupWorker.stop(context)
         ProcessSyncObservers.refresh(context)
