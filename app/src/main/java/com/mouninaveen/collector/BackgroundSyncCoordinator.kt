@@ -1,6 +1,9 @@
 package com.mouninaveen.collector
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
@@ -79,6 +82,30 @@ internal object BackgroundSyncCoordinator {
 
 /** Process starts caused by Android's scheduled work do not require opening an Activity. */
 class PersonalApp : Application() {
+    private val screenChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent?) {
+            if (intent?.action !in listOf(
+                    Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON,
+                    Intent.ACTION_USER_PRESENT
+                )) return
+            val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+            if (!getSharedPreferences("collector", Context.MODE_PRIVATE)
+                    .getBoolean("consent", false) ||
+                DeviceBinding.selectedId(this@PersonalApp, uid) == null ||
+                !hasUsageAccess(this@PersonalApp)) return
+            // Only screen/keyguard metadata; never turn on microphone or SMS here.
+            val request = OneTimeWorkRequestBuilder<UsageSyncWorker>()
+                .setInitialDelay(3, TimeUnit.SECONDS)
+                .setConstraints(Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.CONNECTED).build())
+                .setBackoffCriteria(
+                    BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                ).build()
+            WorkManager.getInstance(this@PersonalApp).enqueueUniqueWork(
+                "lock-check-auto", ExistingWorkPolicy.KEEP, request
+            )
+        }
+    }
     private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
         ProcessSyncObservers.refresh(this)
         if (auth.currentUser != null) {
@@ -90,11 +117,21 @@ class PersonalApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        registerReceiver(
+            screenChangeReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            Context.RECEIVER_NOT_EXPORTED
+        )
         FirebaseAuth.getInstance().addAuthStateListener(authStateListener)
     }
 
     override fun onTerminate() {
         FirebaseAuth.getInstance().removeAuthStateListener(authStateListener)
+        unregisterReceiver(screenChangeReceiver)
         super.onTerminate()
     }
 }
