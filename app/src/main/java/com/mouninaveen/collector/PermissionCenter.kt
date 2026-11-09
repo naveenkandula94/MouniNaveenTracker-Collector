@@ -189,8 +189,12 @@ internal fun PermissionCenter(
                 Text("Enabled jobs persist across app closing and phone restart. Android schedules " +
                     "them subject to battery and network conditions; delivery every 15 seconds is not guaranteed.",
                     style = MaterialTheme.typography.bodySmall)
-                val callLast = callPrefs.getLong(CallBackupWorker.LAST_SUCCESS, 0L)
-                val smsLast = smsPrefs.getLong(SmsBackupWorker.LAST_SUCCESS, 0L)
+                val callLast = if (deviceId == null) 0L else callPrefs.getLong(
+                    "${CallBackupWorker.LAST_SUCCESS}_$deviceId", 0L
+                )
+                val smsLast = if (deviceId == null) 0L else smsPrefs.getLong(
+                    "${SmsBackupWorker.LAST_SUCCESS}_$deviceId", 0L
+                )
                 val lockLast = if (deviceId == null) 0L else basePrefs.getLong(
                     "last_heartbeat_$deviceId", 0L
                 )
@@ -199,6 +203,36 @@ internal fun PermissionCenter(
                 Text("Calls: ${stamp(callLast)}", style = MaterialTheme.typography.bodySmall)
                 Text("Messages: ${stamp(smsLast)}", style = MaterialTheme.typography.bodySmall)
                 Text("Lock: ${stamp(lockLast)}", style = MaterialTheme.typography.bodySmall)
+                val errors = listOf(
+                    "Calls" to callPrefs.getString(CallBackupWorker.LAST_ERROR, "").orEmpty(),
+                    "SMS" to smsPrefs.getString(SmsBackupWorker.LAST_ERROR, "").orEmpty(),
+                    "Lock" to basePrefs.getString("last_lock_error", "").orEmpty()
+                ).filter { it.second.isNotBlank() }
+                if (errors.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("Needs attention", color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.titleSmall)
+                    errors.forEach { (feature, reason) ->
+                        Text("$feature: $reason",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (deviceId == null) {
+                    Text("Backups paused: choose this phone in Account.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                if (!sharing) {
+                    Text("Backups paused: sharing is disabled.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Text(
+                    "Android background work is scheduled, not continuously running. " +
+                        "If offline, a pending upload waits for a network and retries.",
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(enabled = connected && sharing, onClick = {
                         BackgroundSyncCoordinator.syncNow(context)
