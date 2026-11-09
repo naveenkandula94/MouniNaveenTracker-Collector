@@ -117,14 +117,14 @@ class PersonalApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        registerReceiver(
-            screenChangeReceiver,
+        ContextCompat.registerReceiver(
+            this, screenChangeReceiver,
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
                 addAction(Intent.ACTION_USER_PRESENT)
             },
-            Context.RECEIVER_NOT_EXPORTED
+            ContextCompat.RECEIVER_NOT_EXPORTED
         )
         FirebaseAuth.getInstance().addAuthStateListener(authStateListener)
     }
