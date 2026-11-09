@@ -1,6 +1,13 @@
 package com.mouninaveen.collector
 
 import android.app.AppOpsManager
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.CallLog
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
@@ -28,6 +35,36 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
+    private var callChangeObserver: ContentObserver? = null
+
+    override fun onResume() {
+        super.onResume()
+        if (getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
+                .getBoolean(CallBackupWorker.ENABLED, false) &&
+            FirebaseAuth.getInstance().currentUser?.uid ==
+                getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
+                    .getString(CallBackupWorker.OWNER, "") &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) ==
+                PackageManager.PERMISSION_GRANTED
+        ) {
+            CallBackupWorker.schedule(this)
+            if (callChangeObserver == null) {
+                callChangeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean) {
+                        if (!selfChange) CallBackupWorker.trigger(this@MainActivity)
+                    }
+                }
+                contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callChangeObserver!!)
+            }
+        }
+    }
+
+    override fun onPause() {
+        callChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
+        callChangeObserver = null
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -144,15 +181,15 @@ class MainActivity : ComponentActivity() {
                         ElevatedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("What is shared", style = MaterialTheme.typography.titleMedium)
-                                Text("• Lock/unlock timestamps with Usage Access and consent\n• Only call records explicitly selected and approved under Calls\n• Live microphone audio only during an owner-started session\n• Connection and sync diagnostics stay on this phone")
+                                Text("• Lock/unlock timestamps with Usage Access and consent\n• Private call backups for your signed-in account only when enabled under Calls\n• Live microphone audio only during an owner-started session\n• Connection and sync diagnostics stay on this phone")
                                 Text("No SMS, WhatsApp chats, Instagram messages, camera or screenshots are collected.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
                     1 -> {
                         Text("Calls", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("Read recent call records on your phone, review each record, and approve what is shared. Android must grant restricted call-log access.")
-                        DeviceCallHistorySharing(consent = consent, onStatus = { report("CALLS", it) })
+                        Text("One-time permission enables private, automatic call backup to your own signed-in account. You can disable or delete it anytime.")
+                        PrivateCallBackup(onStatus = { report("BACKUP", it) })
                     }
                     2 -> {
                         Text("Live audio", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -173,6 +210,7 @@ class MainActivity : ComponentActivity() {
                                     }) { Text("Copy UID") }
                                     Button(onClick = {
                                         WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
+                                        CallBackupWorker.stop(this@MainActivity)
                                         auth.signOut()
                                         signedIn = false
                                         password = ""
@@ -199,6 +237,10 @@ class MainActivity : ComponentActivity() {
                                                             if (docs.isEmpty) report("ENROLL", "No enrolled device for this UID. Enroll from Admin > Devices.")
                                                             else if (docs.documents.none { it.getBoolean("enabled") != false }) report("ENROLL", "All enrolled devices disabled.")
                                                             else {
+                                                                if (getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).getBoolean(CallBackupWorker.ENABLED, false) &&
+                                                                    getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).getString(CallBackupWorker.OWNER, "") == uid) {
+                                                                    CallBackupWorker.schedule(this@MainActivity)
+                                                                }
                                                                 if (consent && hasUsageAccess(this@MainActivity)) scheduleSync()
                                                                 report("ENROLL", "Collector enrollment verified.")
                                                             }
