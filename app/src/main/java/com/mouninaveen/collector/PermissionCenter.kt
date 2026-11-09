@@ -44,7 +44,7 @@ internal fun PermissionCenter(
             delay(8_000L)
         }
     }
-    val user = FirebaseAuth.getInstance().currentUser
+    val user = remember(refresh) { FirebaseAuth.getInstance().currentUser }
     val uid = user?.uid
     val deviceId = uid?.let { DeviceBinding.selectedId(context, it) }
     val basePrefs = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
