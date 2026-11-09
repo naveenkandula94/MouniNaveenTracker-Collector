@@ -150,6 +150,7 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
         private const val NOW = "private-sms-backup-now"
 
         fun schedule(context: Context, requestNow: Boolean = true) {
+            ProcessSyncObservers.refresh(context)
             if (!context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getBoolean(ENABLED, false)) return
             val constraints = Constraints.Builder()
@@ -183,6 +184,7 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val manager = WorkManager.getInstance(context)
             manager.cancelUniqueWork(PERIODIC)
             manager.cancelUniqueWork(NOW)
+            ProcessSyncObservers.refresh(context)
         }
     }
 }
