@@ -72,6 +72,36 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 )
                 batchRecords.add(id to record)
             }
+            // Process-scoped Android screen broadcasts supplement keyguard
+            // UsageStats events on OEMs that omit them. They are accurately
+            // distinguished from confirmed locks; only USER_PRESENT means unlock.
+            val transition = inputData.getString("screen_transition")
+            val transitionTime = inputData.getLong("screen_transition_at", 0L)
+            if (transition in setOf("SCREEN_ON", "SCREEN_OFF", "SCREEN_UNLOCKED") &&
+                transitionTime in (now - 7L * 86400000L)..(now + 60_000L)) {
+                val alreadyReported = batchRecords.any { (_, item) ->
+                    item["eventType"] == transition &&
+                        kotlin.math.abs(
+                            (item["eventTimestamp"] as? Date)?.time?.minus(transitionTime)
+                                ?: Long.MAX_VALUE
+                        ) < 2_000L
+                }
+                if (!alreadyReported) {
+                    val pkg = "android.screen"
+                    val id = sha256("$transition|$pkg|$transitionTime")
+                    batchRecords.add(id to hashMapOf(
+                        "eventId" to id,
+                        "deviceId" to deviceId,
+                        "eventType" to transition,
+                        "packageName" to pkg,
+                        "applicationLabel" to "Android screen state",
+                        "eventTimestamp" to Date(transitionTime),
+                        "serverTimestamp" to FieldValue.serverTimestamp(),
+                        "timezone" to TimeZone.getDefault().id,
+                        "schemaVersion" to 1
+                    ))
+                }
+            }
             for (chunk in batchRecords.distinctBy { it.first }.chunked(400)) {
                 if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
                 val batch = db.batch()
