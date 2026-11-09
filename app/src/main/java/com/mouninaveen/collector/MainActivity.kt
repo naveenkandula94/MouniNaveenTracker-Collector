@@ -233,7 +233,7 @@ class MainActivity : ComponentActivity() {
                 Surface(tonalElevation = 2.dp) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                         Text("PERSONAL APP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        Text("My phone", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("Personal dashboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text(
                             "${if (signedIn) "Signed in" else "Not signed in"}  •  ${if (consent) "Sharing enabled" else "Sharing off"}",
                             style = MaterialTheme.typography.bodySmall
@@ -242,16 +242,16 @@ class MainActivity : ComponentActivity() {
                 }
             },
             bottomBar = {
-                NavigationBar {
+                NavigationBar(containerColor = androidx.compose.ui.graphics.Color(0xFFE9F2FE)) {
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
-                        listOf("Home", "Calls", "Messages", "Live", "Account", "Logs")
+                        listOf("Home", "Calls", "Messages", "Live", "Account", "Logs", "Access")
                             .forEachIndexed { index, label ->
                                 NavigationBarItem(
                                     modifier = Modifier.width(84.dp),
                                     selected = tab == index,
                                     onClick = { tab = index },
                                     icon = {
-                                        Text(listOf("⌂","☎","✉","◉","●","≡")[index],
+                                        Text(listOf("⌂","☎","✉","◉","●","≡","✓")[index],
                                             style = MaterialTheme.typography.titleMedium)
                                     },
                                     label = { Text(label, maxLines = 1) },
@@ -424,7 +424,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    else -> {
+                    5 -> {
                         Text("Diagnostic logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("App-private diagnostic events. No phone numbers, passwords, audio or message contents are logged.")
                         ElevatedCard(Modifier.fillMaxWidth()) {
@@ -442,6 +442,23 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                    else -> {
+                        PermissionCenter(
+                            onEnableSharing = {
+                                if (!consent) {
+                                    prefs.edit().putBoolean("consent", true)
+                                        .putLong("consent_at", System.currentTimeMillis()).apply()
+                                    consent = true
+                                }
+                                BackgroundSyncCoordinator.maintain(this@MainActivity, true)
+                            },
+                            onOpenCalls = { tab = 1 },
+                            onOpenMessages = { tab = 2 },
+                            onOpenLive = { tab = 3 },
+                            onOpenAccount = { tab = 4 },
+                            onStatus = { report("ACCESS", it) }
+                        )
+                    }
                 }
                 // Keep this composable in the tree across tab switches. Removing it destroyed
                 // the WebRTC peer and caused unexpected CLOSED sessions on tab navigation.
@@ -455,7 +472,7 @@ class MainActivity : ComponentActivity() {
                         onStatus = { report("AUDIO", it) }
                     )
                 }
-                if (tab != 5 && status.isNotBlank()) {
+                if (tab != 5 && tab != 6 && status.isNotBlank()) {
                     Text(status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
             }
