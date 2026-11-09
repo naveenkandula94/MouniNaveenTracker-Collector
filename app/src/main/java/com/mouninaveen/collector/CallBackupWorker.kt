@@ -100,7 +100,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         "callTimestamp" to Date(dateMillis),
                         "durationSeconds" to duration,
                         "source" to "OWNER_PRIVATE_BACKUP",
-                        "schemaVersion" to 1
+                        "schemaVersion" to 2
                     ))
                     pending++
                     total++
