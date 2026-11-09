@@ -131,8 +131,8 @@ class PersonalApp : Application() {
             val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
             if (!getSharedPreferences("collector", Context.MODE_PRIVATE)
                     .getBoolean("consent", false) ||
-                DeviceBinding.selectedId(this@PersonalApp, uid) == null ||
                 !hasUsageAccess(this@PersonalApp)) return
+            val deviceId = DeviceBinding.selectedId(this@PersonalApp, uid) ?: return
             // Capture a truthful screen transition while this process is alive.
             // ACTION_SCREEN_OFF is not necessarily a verified secure lock.
             val transition = when (intent?.action) {
@@ -151,9 +151,11 @@ class PersonalApp : Application() {
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
                 ).build()
-            // Separate work per event: KEEP on one shared name used to discard
-            // quick screen OFF / ON / UNLOCK sequences.
-            WorkManager.getInstance(this@PersonalApp).enqueue(request)
+            // A serialized device-specific chain retains rapid screen OFF / ON /
+            // UNLOCK transitions without running overlapping 7-day backfill jobs.
+            WorkManager.getInstance(this@PersonalApp).enqueueUniqueWork(
+                "screen-event-queue-$deviceId", ExistingWorkPolicy.APPEND_OR_REPLACE, request
+            )
         }
     }
     private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
