@@ -16,6 +16,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FieldValue
 import kotlinx.coroutines.tasks.await
 import java.util.Date
 import java.util.concurrent.TimeUnit
@@ -23,7 +24,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Private call-history backup for the signed-in device owner.
  *
- * Backups live under users/{authUid}/callBackups, NEVER under an Admin device collection.
+ * Backups live under users/{authUid}/deviceCallBackups/{deviceId}/calls.\n * This prevents phone-provider IDs from colliding across separate devices.
  * No WebRTC/media capture and no access to messaging apps.
  */
 class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -40,12 +41,16 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
         return try {
             val database = FirebaseFirestore.getInstance()
-            val target = database.collection("users").document(uid).collection("callBackups")
-            val lastCallTime = prefs.getLong(LAST_CALL_DATE, 0L)
+            val device = DeviceBinding.resolve(context, uid)
+            val deviceId = device.id
+            val target = database.collection("users").document(uid)
+                .collection("deviceCallBackups").document(deviceId).collection("calls")
+            val lastCallTime = prefs.getLong("${LAST_CALL_DATE}_$deviceId", 0L)
             // Re-check the newest timestamp for a possible late duration update,
             // but never rescan a two-day window on every subsequent upload.
             val since = lastCallTime
             var total = 0
+            var newCalls = 0
             var newest = lastCallTime
             var batch = database.batch()
             var pending = 0
@@ -89,6 +94,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     batch.set(target.document(docId), mapOf(
                         "callId" to docId,
                         "ownerUid" to uid,
+                        "deviceId" to deviceId,
                         "number" to number,
                         "direction" to direction,
                         "callTimestamp" to Date(dateMillis),
@@ -98,6 +104,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     ))
                     pending++
                     total++
+                    if (dateMillis > lastCallTime) newCalls++
                     if (dateMillis > newest) newest = dateMillis
                     if (pending >= 200) {
                         if (!prefs.getBoolean(ENABLED, false) || prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid) return Result.success()
@@ -112,12 +119,29 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 batch.commit().await()
             }
             prefs.edit()
-                .putLong(LAST_CALL_DATE, newest)
+                .putLong("${LAST_CALL_DATE}_$deviceId", newest)
                 .putLong(LAST_SUCCESS, System.currentTimeMillis())
                 .putInt(LAST_COUNT, total)
                 .putString(LAST_ERROR, "")
                 .apply()
-            CollectorDiagnostics.record(context, "BACKUP", if (lastCallTime == 0L) "Initial private backup completed: $total records." else "Incremental backup checked $total recent records.")
+            CollectorDiagnostics.record(context, "BACKUP",
+                if (lastCallTime == 0L) "Initial backup for bound phone: $total records."
+                else "Incremental check: $newCalls new calls, $total checked.")
+            // Non-sensitive, device-scoped sync diagnostics for the linked owner dashboard.
+            if (newCalls > 0 || lastCallTime == 0L) {
+                try {
+                    device.reference.collection("syncLogs").add(
+                        mapOf(
+                            "eventType" to "CALL_BACKUP",
+                            "count" to newCalls,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "status" to "SUCCESS"
+                        )
+                    ).await()
+                } catch (e: Exception) {
+                    CollectorDiagnostics.record(context, "BACKUP", "Remote sync status unavailable; backup remains saved.")
+                }
+            }
             Result.success()
         } catch (e: SecurityException) {
             prefs.edit().putString(LAST_ERROR, "Android denied call-log access: ${e.localizedMessage}").apply()
