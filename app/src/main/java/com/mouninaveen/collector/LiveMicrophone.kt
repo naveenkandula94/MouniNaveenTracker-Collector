@@ -26,7 +26,9 @@ private class PublisherSession(
     val reference: DocumentReference,
     val listeners: List<ListenerRegistration>
 ) {
+    private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
     fun stop() {
+        if (!stopped.compareAndSet(false, true)) return
         listeners.forEach { it.remove() }
         peer.close()
         reference.update("status", "ENDED", "endedAt", FieldValue.serverTimestamp())
