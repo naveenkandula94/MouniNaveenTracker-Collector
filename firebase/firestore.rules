@@ -60,7 +60,7 @@ service cloud.firestore {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
      && request.resource.data.keys().hasOnly(['eventType','count','timestamp','status'])
      && request.resource.data.keys().hasAll(['eventType','count','timestamp','status'])
-     && request.resource.data.eventType in ['CALL_BACKUP','LOCK_SYNC']
+     && request.resource.data.eventType in ['CALL_BACKUP','LOCK_SYNC','SMS_BACKUP']
      && request.resource.data.status == 'SUCCESS'
      && request.resource.data.count is int
      && request.resource.data.count >= 0
@@ -143,6 +143,37 @@ service cloud.firestore {
       && request.resource.data.durationSeconds <= 86400;
     }
    }
+   // Message contents are a private owner-controlled backup, never a device
+   // collection readable by a different Admin account.
+   match /deviceSmsBackups/{deviceId} {
+    allow read, write: if false;
+    match /messages/{smsId} {
+     allow get, list, delete: if signedIn() && request.auth.uid == uid;
+     allow create, update: if signedIn() && request.auth.uid == uid
+      && isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly([
+       'smsId','ownerUid','deviceId','address','body','direction',
+       'receivedAt','source','schemaVersion'
+      ])
+      && request.resource.data.keys().hasAll([
+       'smsId','ownerUid','deviceId','address','body','direction',
+       'receivedAt','source','schemaVersion'
+      ])
+      && request.resource.data.smsId == smsId
+      && request.resource.data.ownerUid == uid
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.source == 'OWNER_PRIVATE_SMS_BACKUP'
+      && request.resource.data.schemaVersion == 1
+      && request.resource.data.address is string
+      && request.resource.data.address.size() <= 128
+      && request.resource.data.body is string
+      && request.resource.data.body.size() <= 4000
+      && request.resource.data.direction in ['RECEIVED','SENT']
+      && request.resource.data.receivedAt is timestamp
+      && request.resource.data.receivedAt <= request.time + duration.value(1, 'd');
+    }
+   }
+
    match /callBackups/{callId} {
     allow get, list, delete: if request.auth != null && request.auth.uid == uid;
     allow create, update: if request.auth != null && request.auth.uid == uid
