@@ -89,7 +89,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 if (!alreadyReported) {
                     val pkg = "android.screen"
                     val id = sha256("$transition|$pkg|$transitionTime")
-                    batchRecords.add(id to hashMapOf(
+                    val record = hashMapOf<String, Any>(
                         "eventId" to id,
                         "deviceId" to deviceId,
                         "eventType" to transition,
@@ -99,7 +99,8 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                         "serverTimestamp" to FieldValue.serverTimestamp(),
                         "timezone" to TimeZone.getDefault().id,
                         "schemaVersion" to 1
-                    ))
+                    )
+                    batchRecords.add(id to record)
                 }
             }
             for (chunk in batchRecords.distinctBy { it.first }.chunked(400)) {
