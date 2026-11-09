@@ -301,6 +301,18 @@ class MicrophoneStreamService : Service() {
             CollectorDiagnostics.record(this, "AUDIO",
                 "User-started foreground microphone session, phone-specific and visible.")
 
+            // A WebRTC or Firestore callback can stall without throwing. Do not
+            // misleadingly leave the screen saying "Starting" indefinitely.
+            scope.launch {
+                delay(45_000L)
+                if (isStarted && generation == sessionId && MicStreamStatus.state.value.starting) {
+                    val reason = "No microphone offer after 45 seconds. Check Firebase rules and network, then Start again."
+                    CollectorDiagnostics.record(this@MicrophoneStreamService, "AUDIO", reason)
+                    endSession(reason)
+                    stopSelf()
+                }
+            }
+
             // Stats sampling belongs to the service rather than UI lifecycle.
             scope.launch {
                 while (isStarted && generation == sessionId) {
