@@ -46,6 +46,44 @@ service cloud.firestore {
     allow read: if isOwner(deviceId);
     allow update, delete: if false;
    }
+   match /liveAudio/{sessionId} {
+    allow read: if isOwner(deviceId) || isCollector(deviceId);
+    allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.keys().hasOnly(['collectorUid','deviceId','status','createdAt'])
+      && request.resource.data.keys().hasAll(['collectorUid','deviceId','status','createdAt'])
+      && request.resource.data.collectorUid == request.auth.uid
+      && request.resource.data.deviceId == deviceId
+      && request.resource.data.status == 'STARTING'
+      && request.resource.data.createdAt == request.time;
+    allow update: if
+      (isCollector(deviceId) && enrollmentActive(deviceId)
+       && request.resource.data.collectorUid == resource.data.collectorUid
+       && request.resource.data.deviceId == resource.data.deviceId
+       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer','status','endedAt'])
+       && request.resource.data.status in ['OFFERED','ENDED'])
+      ||
+      (isOwner(deviceId)
+       && request.resource.data.collectorUid == resource.data.collectorUid
+       && request.resource.data.deviceId == resource.data.deviceId
+       && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answer','status'])
+       && resource.data.status == 'OFFERED'
+       && request.resource.data.status == 'ANSWERED');
+    allow delete: if false;
+    match /publisherIce/{candidateId} {
+     allow read: if isOwner(deviceId) || isCollector(deviceId);
+     allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
+       && request.resource.data.keys().hasOnly(['sdp','mid','line'])
+       && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
+     allow update, delete: if false;
+    }
+    match /listenerIce/{candidateId} {
+     allow read: if isOwner(deviceId) || isCollector(deviceId);
+     allow create: if isOwner(deviceId)
+       && request.resource.data.keys().hasOnly(['sdp','mid','line'])
+       && request.resource.data.sdp is string && request.resource.data.mid is string && request.resource.data.line is int;
+     allow update, delete: if false;
+    }
+   }
   }
   match /{document=**} { allow read, write: if false; }
  }
