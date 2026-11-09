@@ -73,6 +73,8 @@ class MicrophoneStreamService : Service() {
     private var streamOwnerUid: String? = null
     private var streamDeviceId: String? = null
     private var isStarted = false
+    private var reconnectAttempts = 0
+    private var reconnectJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -149,6 +151,47 @@ class MicrophoneStreamService : Service() {
         return START_NOT_STICKY
     }
 
+    private fun recordPeerStatus(message: String, generation: Int) {
+        if (!isStarted || generation != sessionId) return
+        MicStreamStatus.status(message)
+        if (message.endsWith("CONNECTED") || message.endsWith("COMPLETED")) {
+            reconnectAttempts = 0
+            reconnectJob?.cancel()
+            reconnectJob = null
+        } else if (message.endsWith("DISCONNECTED") || message.endsWith("FAILED")) {
+            if (reconnectJob?.isActive == true) return
+            if (reconnectAttempts >= 3) {
+                MicStreamStatus.status(
+                    "Audio connection lost. Tap Stop and start another session to retry."
+                )
+                return
+            }
+            val pendingGeneration = sessionId
+            reconnectJob = scope.launch {
+                // Give WebRTC a chance to recover transient mobile handovers itself.
+                delay(if (message.endsWith("DISCONNECTED")) 15_000L else 5_000L)
+                if (!isStarted || pendingGeneration != sessionId) return@launch
+                reconnectAttempts++
+                MicStreamStatus.status(
+                    "Reconnecting microphone session (${reconnectAttempts}/3)…"
+                )
+                clearCurrentPeer()
+                startSession()
+            }
+        }
+    }
+
+    private fun clearCurrentPeer() {
+        registrations.forEach { it.remove() }
+        registrations = emptyList()
+        sessionPeer?.close()
+        sessionPeer = null
+        sessionRef?.update(
+            "status", "ENDED", "endedAt", FieldValue.serverTimestamp()
+        )
+        sessionRef = null
+    }
+
     private suspend fun startSession() {
         val generation = ++sessionId
         try {
@@ -186,7 +229,7 @@ class MicrophoneStreamService : Service() {
                     }
                 },
                 onStatus = { message ->
-                    MicStreamStatus.status(message)
+                    recordPeerStatus(message, generation)
                 }
             )
             sessionPeer = peer
@@ -274,14 +317,9 @@ class MicrophoneStreamService : Service() {
         if (!isStarted && sessionPeer == null) return
         isStarted = false
         sessionId++
-        registrations.forEach { it.remove() }
-        registrations = emptyList()
-        sessionPeer?.close()
-        sessionPeer = null
-        sessionRef?.update(
-            "status", "ENDED", "endedAt", FieldValue.serverTimestamp()
-        )
-        sessionRef = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        clearCurrentPeer()
         streamOwnerUid = null
         streamDeviceId = null
         MicStreamStatus.set(MicStreamState(status = reason))
