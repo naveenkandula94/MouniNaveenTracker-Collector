@@ -201,16 +201,21 @@ class MicrophoneStreamService : Service() {
             val consent = getSharedPreferences("collector", MODE_PRIVATE)
                 .getBoolean("consent", false)
             check(consent) { "Sharing has been disabled by the owner." }
-            val device = DeviceBinding.resolve(this, uid)
+            MicStreamStatus.status("Checking linked phone and Firebase enrollment…")
+            val device = withTimeout(20_000L) { DeviceBinding.resolve(this@MicrophoneStreamService, uid) }
+            if (!isStarted || generation != sessionId) return
             streamOwnerUid = uid
             streamDeviceId = device.id
             val ref = device.reference.collection("liveAudio").document()
-            ref.set(mapOf(
-                "collectorUid" to uid,
-                "deviceId" to device.id,
-                "status" to "STARTING",
-                "createdAt" to FieldValue.serverTimestamp()
-            )).await()
+            MicStreamStatus.status("Creating microphone session in Firebase…")
+            withTimeout(25_000L) {
+                ref.set(mapOf(
+                    "collectorUid" to uid,
+                    "deviceId" to device.id,
+                    "status" to "STARTING",
+                    "createdAt" to FieldValue.serverTimestamp()
+                )).await()
+            }
 
             if (!isStarted || generation != sessionId) {
                 ref.update("status", "ENDED", "endedAt", FieldValue.serverTimestamp())
@@ -267,20 +272,32 @@ class MicrophoneStreamService : Service() {
                 }
             }
             registrations = listOf(answerListener, candidates)
+            MicStreamStatus.set(MicStreamState(
+                active = true, starting = true,
+                status = "Preparing WebRTC microphone offer for the selected phone."
+            ))
             peer.createOffer { offer ->
                 if (isStarted && generation == sessionId) {
                     ref.update("offer", offer, "status", "OFFERED")
+                        .addOnSuccessListener {
+                            if (isStarted && generation == sessionId) {
+                                MicStreamStatus.set(MicStreamState(
+                                    active = true, starting = false,
+                                    status = "Microphone offer published. Open Admin Live and tap Listen now."
+                                ))
+                                CollectorDiagnostics.record(this, "AUDIO",
+                                    "WebRTC offer published for selected phone.")
+                            }
+                        }
                         .addOnFailureListener { error ->
-                            MicStreamStatus.status(
-                                "Could not publish microphone offer: ${error.localizedMessage}"
-                            )
+                            if (isStarted && generation == sessionId) {
+                                val message = "Could not publish microphone offer: ${error.localizedMessage}"
+                                MicStreamStatus.status(message)
+                                CollectorDiagnostics.record(this, "AUDIO", message)
+                            }
                         }
                 }
             }
-            MicStreamStatus.set(MicStreamState(
-                active = true, starting = false,
-                status = "Microphone active. Switch apps or lock screen; notification shows Stop."
-            ))
             CollectorDiagnostics.record(this, "AUDIO",
                 "User-started foreground microphone session, phone-specific and visible.")
 
@@ -291,8 +308,20 @@ class MicrophoneStreamService : Service() {
                     delay(250L)
                 }
             }
+        } catch (e: CancellationException) {
+            // A previous start may be cancelled by Stop or service teardown.
+            // Never let that old job terminate a newly started session.
+            if (isStarted && generation == sessionId) {
+                val reason = "Microphone startup interrupted. Tap Start to retry."
+                CollectorDiagnostics.record(this, "AUDIO", reason)
+                endSession(reason)
+                stopSelf()
+            }
         } catch (e: Exception) {
-            val reason = "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+            if (!isStarted || generation != sessionId) return
+            val reason = if (e is TimeoutCancellationException)
+                "Firebase enrollment/session timed out. Check network, device selection and published Firestore rules."
+            else "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
             CollectorDiagnostics.record(this, "AUDIO", reason)
             endSession(reason)
             stopSelf()
