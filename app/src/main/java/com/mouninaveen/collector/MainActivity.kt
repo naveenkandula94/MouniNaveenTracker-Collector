@@ -67,8 +67,23 @@ class MainActivity : ComponentActivity() {
         foregroundLockJob?.cancel()
         foregroundLockJob = lifecycleScope.launch {
             while (isActive) {
-                queueLockCheck()
-                delay(15_000L)
+                val uid = FirebaseAuth.getInstance().currentUser?.uid
+                if (uid != null && prefs.getBoolean("consent", false) &&
+                    hasUsageAccess(this@MainActivity) &&
+                    DeviceBinding.selectedId(this@MainActivity, uid) != null) {
+                    try {
+                        // Run Firebase SDK writes directly while visible; no WorkManager queue.
+                        UsageSyncEngine.sync(this@MainActivity)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        CollectorDiagnostics.record(
+                            this@MainActivity, "LOCK",
+                            "Foreground sync failed: ${error.localizedMessage ?: error.javaClass.simpleName}"
+                        )
+                    }
+                }
+                delay(60_000L)
             }
         }
     }
@@ -217,7 +232,7 @@ class MainActivity : ComponentActivity() {
                 }
                 checkedAt = if (id == null) 0L else
                     prefs.getLong("last_heartbeat_$id", 0L)
-                delay(15_000L)
+                delay(60_000L)
             }
         }
 
@@ -311,14 +326,14 @@ class MainActivity : ComponentActivity() {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
-                                Text("Lock/unlock: automatic 15-second checks while the app is visible.")
+                                Text("Lock/unlock: direct Firebase checks every 60 seconds while the app is visible.")
                                 Text("Last Firebase status update: " +
                                     if (checkedAt > 0L)
                                         SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault())
                                             .format(Date(checkedAt))
                                     else "Not yet — check device selection and Usage Access"
                                 )
-                                Text("Background timing is controlled by Android; a locked phone cannot guarantee 15-second uploads.",
+                                Text("Background timing is controlled by Android; a locked phone cannot guarantee 60-second uploads.",
                                     style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = {
                                     usageGranted = hasUsageAccess(this@MainActivity)
