@@ -34,6 +34,8 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val device = DeviceBinding.resolve(applicationContext, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
+            CollectorDiagnostics.record(applicationContext, "LOCK",
+                "Checking screen events for the selected phone.")
             // Different phones share a Firebase UID, but never share an event cursor.
             // First scan asks Android for its available keyguard events over 7 days.
             // Future runs scan only the new interval with a short overlap for reliability.
@@ -56,6 +58,10 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 } ?: continue
                 val pkg = "android.keyguard"
                 val ts = event.timeStamp
+                // The overlap helps discover late keyguard events, but avoid
+                // rewriting already uploaded IDs (which older published rules
+                // could reject as updates and block the entire sync batch).
+                if (lastSuccess > 0L && ts <= lastSuccess) continue
                 val id = sha256("$type|$pkg|$ts")
                 val label = "Device lock state"
                 val record = hashMapOf<String, Any>(
