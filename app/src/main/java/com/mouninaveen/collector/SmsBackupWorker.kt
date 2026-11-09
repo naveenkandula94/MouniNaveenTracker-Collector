@@ -147,7 +147,7 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
         private const val PERIODIC = "private-sms-backup-periodic"
         private const val NOW = "private-sms-backup-now"
 
-        fun schedule(context: Context) {
+        fun schedule(context: Context, requestNow: Boolean = true) {
             if (!context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getBoolean(ENABLED, false)) return
             val constraints = Constraints.Builder()
@@ -155,9 +155,12 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 PERIODIC, ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<SmsBackupWorker>(15, TimeUnit.MINUTES)
-                    .setConstraints(constraints).build()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                    ).build()
             )
-            trigger(context)
+            if (requestNow) trigger(context)
         }
 
         fun trigger(context: Context) {
@@ -168,7 +171,9 @@ class SmsBackupWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 OneTimeWorkRequestBuilder<SmsBackupWorker>()
                     .setConstraints(Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED).build())
-                    .build()
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                    ).build()
             )
         }
 
