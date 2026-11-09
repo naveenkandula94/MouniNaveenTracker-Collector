@@ -291,6 +291,7 @@ class MainActivity : ComponentActivity() {
                                             getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
                                                 .edit().putBoolean(SmsBackupWorker.ENABLED, false).apply()
                                             SmsBackupWorker.stop(this@MainActivity)
+                                            MicrophoneStreamService.stop(this@MainActivity)
                                             refreshCallBackupObserver()
                                             refreshSmsBackupObserver()
                                             report("CONSENT", "All sharing and automatic call backup disabled. Existing private backup can be deleted under Calls.")
@@ -368,6 +369,7 @@ class MainActivity : ComponentActivity() {
                                     Button(onClick = {
                                         WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
                                         CallBackupWorker.stop(this@MainActivity)
+                                        MicrophoneStreamService.stop(this@MainActivity)
                                         auth.signOut()
                                         signedIn = false
                                         password = ""
