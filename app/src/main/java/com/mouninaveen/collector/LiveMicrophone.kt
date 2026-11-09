@@ -18,6 +18,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.DocumentReference
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import org.webrtc.IceCandidate
 
@@ -48,6 +50,7 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
     }
     var sessionConsent by remember { mutableStateOf(false) }
     var connectionState by remember { mutableStateOf("Not sharing") }
+    var audioLevel by remember { mutableFloatStateOf(0f) }
 
     fun begin() {
         if (starting || session != null || !sessionConsent || !sharingEnabled) return
@@ -145,6 +148,18 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
         }
     }
 
+    LaunchedEffect(session) {
+        val activeSession = session
+        audioLevel = 0f
+        while (activeSession != null && isActive) {
+            activeSession.peer.sampleAudioLevel { sample ->
+                (context as android.app.Activity).runOnUiThread { audioLevel = sample }
+            }
+            delay(250L)
+        }
+        audioLevel = 0f
+    }
+
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Live microphone", style = MaterialTheme.typography.titleLarge)
@@ -160,6 +175,16 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
             }
             Text("Microphone permission: ${if (permissionGranted) "Granted" else "Not granted"}")
             Text("Session: $connectionState")
+            AudioLevelMeter(
+                label = "Microphone input • live volume",
+                level = audioLevel,
+                active = session != null
+            )
+            Text(
+                "Speak near the phone. The bar reflects the actual WebRTC microphone input; " +
+                    "it does not confirm Admin is hearing it until the call connects.",
+                style = MaterialTheme.typography.bodySmall
+            )
             if (session == null) {
                 Button(
                     enabled = sharingEnabled && sessionConsent && !starting && auth.currentUser != null,
