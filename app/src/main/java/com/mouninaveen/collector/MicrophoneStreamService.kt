@@ -292,8 +292,9 @@ class MicrophoneStreamService : Service() {
                 }
             }
         } catch (e: Exception) {
-            MicStreamStatus.status("Could not start microphone: ${e.localizedMessage}")
-            endSession("Microphone session failed.")
+            val reason = "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+            CollectorDiagnostics.record(this, "AUDIO", reason)
+            endSession(reason)
             stopSelf()
         }
     }
