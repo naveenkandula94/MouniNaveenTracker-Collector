@@ -9,7 +9,9 @@ service cloud.firestore {
   function enrollmentActive(deviceId){ return !(deviceDoc(deviceId).data.get("enabled", true) == false); }
   match /admins/{uid} { allow read: if signedIn() && request.auth.uid == uid; allow write: if false; }
   match /devices/{deviceId} {
-   allow read: if isOwner(deviceId) || isCollector(deviceId);
+   // Queries must be provably scoped by adminUid or collectorUid; read is not a query filter.
+   allow get: if isOwner(deviceId) || isCollector(deviceId);
+   allow list: if signedIn() && (resource.data.adminUid == request.auth.uid || resource.data.collectorUid == request.auth.uid);
    allow create: if isAdmin() && request.resource.data.adminUid == request.auth.uid && request.resource.data.collectorUid is string && request.resource.data.displayName is string && request.resource.data.keys().hasOnly(['adminUid','collectorUid','displayName','createdAt']);
    allow update: if (isOwner(deviceId) && request.resource.data.adminUid == resource.data.adminUid && request.resource.data.collectorUid == resource.data.collectorUid) || (isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSyncAt','lastSyncStatus']));
    allow delete: if isOwner(deviceId);
