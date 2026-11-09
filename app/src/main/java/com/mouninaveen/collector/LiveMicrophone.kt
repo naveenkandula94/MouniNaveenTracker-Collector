@@ -3,7 +3,6 @@ package com.mouninaveen.collector
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
-import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -41,12 +40,6 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                 "Choose THIS phone in Account before starting microphone sharing."
             }
             check(permissionGranted) { "Grant microphone permission first." }
-            if (Build.VERSION.SDK_INT >= 33) {
-                check(ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-                    == PackageManager.PERMISSION_GRANTED) {
-                    "Allow ongoing sharing notifications to see and stop microphone capture."
-                }
-            }
             MicrophoneStreamService.start(context as Activity)
             onStatus("Starting foreground microphone service with visible Stop notification.")
         } catch (e: Exception) {
@@ -54,24 +47,12 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
         }
     }
 
-    val notificationRequest = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) startFromVisibleApp()
-        else onStatus("Enable notification permission to show a visible microphone Stop control.")
-    }
-
     val micPermissionRequest = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         permissionGranted = granted
-        if (granted) {
-            if (Build.VERSION.SDK_INT >= 33 &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                    PackageManager.PERMISSION_GRANTED
-            ) notificationRequest.launch(Manifest.permission.POST_NOTIFICATIONS)
-            else startFromVisibleApp()
-        } else onStatus("Android microphone permission denied. Nothing is transmitted.")
+        if (granted) startFromVisibleApp()
+        else onStatus("Android microphone permission denied. Nothing is transmitted.")
     }
 
     LaunchedEffect(sharingEnabled) {
@@ -125,11 +106,6 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                         ) == PackageManager.PERMISSION_GRANTED
                         if (!permissionGranted) {
                             micPermissionRequest.launch(Manifest.permission.RECORD_AUDIO)
-                        } else if (Build.VERSION.SDK_INT >= 33 &&
-                            ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.POST_NOTIFICATIONS
-                            ) != PackageManager.PERMISSION_GRANTED) {
-                            notificationRequest.launch(Manifest.permission.POST_NOTIFICATIONS)
                         } else startFromVisibleApp()
                     }
                 ) { Text("Start microphone session") }
