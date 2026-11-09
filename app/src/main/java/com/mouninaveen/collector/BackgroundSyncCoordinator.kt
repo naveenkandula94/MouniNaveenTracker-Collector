@@ -18,6 +18,7 @@ internal object BackgroundSyncCoordinator {
     private const val LOCK_WORK = "usage-sync"
 
     fun maintain(context: Context, requestCatchUp: Boolean = false) {
+        ProcessSyncObservers.refresh(context)
         val owner = FirebaseAuth.getInstance().currentUser?.uid ?: return
         if (DeviceBinding.selectedId(context, owner) == null) return
         val sharing = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
@@ -72,12 +73,14 @@ internal object BackgroundSyncCoordinator {
         wm.cancelUniqueWork("lock-check-auto")
         CallBackupWorker.stop(context)
         SmsBackupWorker.stop(context)
+        ProcessSyncObservers.refresh(context)
     }
 }
 
 /** Process starts caused by Android's scheduled work do not require opening an Activity. */
 class PersonalApp : Application() {
     private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
+        ProcessSyncObservers.refresh(this)
         if (auth.currentUser != null) {
             // Firebase may restore its persisted sign-in after Application.onCreate.
             // Don't rely on the user opening MainActivity to restore enabled jobs.
