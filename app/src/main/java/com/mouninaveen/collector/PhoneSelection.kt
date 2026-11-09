@@ -63,6 +63,7 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
                             val oldId = selected
                             if (oldId != option.id) {
                                 CallBackupWorker.stop(context)
+                                SmsBackupWorker.stop(context)
                                 DeviceBinding.bind(context, uid!!, option.id)
                                 // Prevent a previous phone selection's event cursor from skipping
                                 // the new phone's first available lock/unlock events.
@@ -74,7 +75,12 @@ fun PhoneSelection(onStatus: (String) -> Unit) {
                                         .getBoolean(CallBackupWorker.ENABLED, false)) {
                                     CallBackupWorker.schedule(context)
                                 }
-                                onStatus("Selected ${option.name}. Automatic lock/unlock and private call backup now use this phone only.")
+                                if (context.getSharedPreferences(SmsBackupWorker.PREFS, android.content.Context.MODE_PRIVATE)
+                                        .getBoolean(SmsBackupWorker.ENABLED, false)) {
+                                    SmsBackupWorker.schedule(context)
+                                    (context as? MainActivity)?.refreshSmsBackupObserver()
+                                }
+                                onStatus("Selected ${option.name}. This installation now uses only this phone's backup and activity paths.")
                             }
                         }
                     ) { Text(if (selected == option.id) "Selected" else "Use this phone") }
