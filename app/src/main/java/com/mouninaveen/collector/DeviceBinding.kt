@@ -29,15 +29,19 @@ internal object DeviceBinding {
             .apply()
     }
     suspend fun resolve(context: Context, uid: String): DocumentSnapshot {
-        val docs = FirebaseFirestore.getInstance().collection("devices")
-            .whereEqualTo("collectorUid", uid).get().await().documents
-            .filter { it.getBoolean("enabled") != false }
-        check(docs.isNotEmpty()) { "No active enrollment. Add this phone in Admin settings." }
         val selected = selectedId(context, uid)
-        check(selected != null) {
-            "Select this phone manually in Personal_App > Account > This phone before syncing."
+            ?: error("Select this phone in Personal_App > Account > This phone before syncing.")
+        // Fetch only the owner's explicitly selected enrollment. A server read
+        // prevents a cached/old enrollment from falsely appearing active.
+        val document = FirebaseFirestore.getInstance().collection("devices")
+            .document(selected).get(com.google.firebase.firestore.Source.SERVER).await()
+        check(document.exists()) { "Selected enrollment no longer exists in Firebase." }
+        check(document.getString("collectorUid") == uid) {
+            "This signed-in account is not the selected phone's collector."
         }
-        return docs.firstOrNull { it.id == selected }
-            ?: error("Selected phone is not actively enrolled. Choose a valid device in Account.")
+        check(document.getBoolean("enabled") != false) {
+            "Selected phone enrollment is disabled by its administrator."
+        }
+        return document
     }
 }
