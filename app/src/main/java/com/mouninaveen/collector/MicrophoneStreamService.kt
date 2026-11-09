@@ -308,20 +308,23 @@ class MicrophoneStreamService : Service() {
                     delay(250L)
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            if (!isStarted || generation != sessionId) return
+            val reason = "Firebase enrollment/session timed out. Check network, selected phone and published Firestore rules."
+            CollectorDiagnostics.record(this, "AUDIO", reason)
+            endSession(reason)
+            stopSelf()
         } catch (e: CancellationException) {
-            // A previous start may be cancelled by Stop or service teardown.
-            // Never let that old job terminate a newly started session.
-            if (isStarted && generation == sessionId) {
-                val reason = "Microphone startup interrupted. Tap Start to retry."
-                CollectorDiagnostics.record(this, "AUDIO", reason)
-                endSession(reason)
-                stopSelf()
-            }
+            // Cancellation of an older start is expected when Stop was pressed.
+            // An obsolete coroutine must never close the next live session.
+            if (!isStarted || generation != sessionId) return
+            val reason = "Microphone startup interrupted. Tap Start to retry."
+            CollectorDiagnostics.record(this, "AUDIO", reason)
+            endSession(reason)
+            stopSelf()
         } catch (e: Exception) {
             if (!isStarted || generation != sessionId) return
-            val reason = if (e is TimeoutCancellationException)
-                "Firebase enrollment/session timed out. Check network, device selection and published Firestore rules."
-            else "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
+            val reason = "Microphone start failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
             CollectorDiagnostics.record(this, "AUDIO", reason)
             endSession(reason)
             stopSelf()
