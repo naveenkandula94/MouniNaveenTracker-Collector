@@ -37,6 +37,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.TimeUnit
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
@@ -166,6 +169,25 @@ class MainActivity : ComponentActivity() {
         var status by remember { mutableStateOf("Select a feature to see its status.") }
         var diagnosticVersion by remember { mutableIntStateOf(0) }
         val context = LocalContext.current
+        var checkedAt by remember { mutableLongStateOf(0L) }
+        LaunchedEffect(signedIn) {
+            val uid = auth.currentUser?.uid
+            if (signedIn && uid != null &&
+                DeviceBinding.selectedId(this@MainActivity, uid) == null) {
+                tab = 3
+                status = "Please select THIS phone under Account before syncing begins."
+            }
+        }
+        LaunchedEffect(tab, signedIn) {
+            while (signedIn && tab == 0) {
+                val id = auth.currentUser?.uid?.let {
+                    DeviceBinding.selectedId(this@MainActivity, it)
+                }
+                checkedAt = if (id == null) 0L else
+                    prefs.getLong("last_heartbeat_$id", 0L)
+                delay(15_000L)
+            }
+        }
 
         fun report(category: String, message: String) {
             status = message
@@ -246,7 +268,15 @@ class MainActivity : ComponentActivity() {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
-                                Text("Auto lock check: 15 seconds while Personal_App is visible; Android-managed background checks.")
+                                Text("Lock/unlock: automatic 15-second checks while the app is visible.")
+                                Text("Last Firebase status update: " +
+                                    if (checkedAt > 0L)
+                                        SimpleDateFormat("dd MMM HH:mm:ss", Locale.getDefault())
+                                            .format(Date(checkedAt))
+                                    else "Not yet — check device selection and Usage Access"
+                                )
+                                Text("Background timing is controlled by Android; a locked phone cannot guarantee 15-second uploads.",
+                                    style = MaterialTheme.typography.bodySmall)
                                 OutlinedButton(onClick = {
                                     usageGranted = hasUsageAccess(this@MainActivity)
                                     if (consent && signedIn && usageGranted) {
