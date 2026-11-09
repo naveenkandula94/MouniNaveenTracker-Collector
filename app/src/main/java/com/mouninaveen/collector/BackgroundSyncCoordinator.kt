@@ -133,17 +133,27 @@ class PersonalApp : Application() {
                     .getBoolean("consent", false) ||
                 DeviceBinding.selectedId(this@PersonalApp, uid) == null ||
                 !hasUsageAccess(this@PersonalApp)) return
-            // Only screen/keyguard metadata; never turn on microphone or SMS here.
+            // Capture a truthful screen transition while this process is alive.
+            // ACTION_SCREEN_OFF is not necessarily a verified secure lock.
+            val transition = when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> "SCREEN_OFF"
+                Intent.ACTION_SCREEN_ON -> "SCREEN_ON"
+                Intent.ACTION_USER_PRESENT -> "SCREEN_UNLOCKED"
+                else -> return
+            }
             val request = OneTimeWorkRequestBuilder<UsageSyncWorker>()
-                .setInitialDelay(3, TimeUnit.SECONDS)
+                .setInputData(workDataOf(
+                    "screen_transition" to transition,
+                    "screen_transition_at" to System.currentTimeMillis()
+                ))
                 .setConstraints(Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(
                     BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
                 ).build()
-            WorkManager.getInstance(this@PersonalApp).enqueueUniqueWork(
-                "lock-check-auto", ExistingWorkPolicy.KEEP, request
-            )
+            // Separate work per event: KEEP on one shared name used to discard
+            // quick screen OFF / ON / UNLOCK sequences.
+            WorkManager.getInstance(this@PersonalApp).enqueue(request)
         }
     }
     private val authStateListener = FirebaseAuth.AuthStateListener { auth ->
