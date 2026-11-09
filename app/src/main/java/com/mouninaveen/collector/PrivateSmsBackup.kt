@@ -46,6 +46,11 @@ internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
             onStatus("Sign in and grant eligible Android SMS permission first.")
             return
         }
+        if (!context.getSharedPreferences("collector", Context.MODE_PRIVATE)
+                .getBoolean("consent", false)) {
+            onStatus("Enable sharing on Home before starting SMS backup.")
+            return
+        }
         busy = true
         scope.launch {
             try {
