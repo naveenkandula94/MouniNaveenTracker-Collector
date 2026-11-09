@@ -80,17 +80,17 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                         (context as android.app.Activity).runOnUiThread { connectionState = message }
                     }
                 )
+                var answerApplied = false
                 val signal = ref.addSnapshotListener { snapshot, error ->
                     if (error != null) { connectionState = "Signaling error: ${error.localizedMessage}"; return@addSnapshotListener }
                     if (snapshot?.getString("status") == "ENDED") {
                         connectionState = "Session ended. Tap Stop sharing to close."
                     }
                     val answer = snapshot?.getString("answer")
-                    if (answer != null && answer.isNotBlank() && snapshot.getString("status") == "ANSWERED") {
-                        if (connectionState != "Connected to Admin") {
-                            peer.receiveAnswer(answer)
-                            connectionState = "Connecting audio…"
-                        }
+                    if (answer != null && answer.isNotBlank() && snapshot.getString("status") == "ANSWERED" && !answerApplied) {
+                        answerApplied = true
+                        peer.receiveAnswer(answer)
+                        connectionState = "Connecting audio…"
                     }
                 }
                 val ice = ref.collection("listenerIce").addSnapshotListener { snapshot, _ ->
@@ -119,8 +119,16 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
         permissionGranted = granted
         if (granted) begin() else onStatus("Microphone permission denied. No audio sent.")
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(session) {
         onDispose { session?.stop() }
+    }
+    LaunchedEffect(sharingEnabled) {
+        if (!sharingEnabled && session != null) {
+            session?.stop()
+            session = null
+            sessionConsent = false
+            connectionState = "Sharing consent withdrawn; microphone stopped."
+        }
     }
 
     ElevatedCard(Modifier.fillMaxWidth()) {
