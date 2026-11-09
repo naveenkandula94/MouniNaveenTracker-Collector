@@ -34,18 +34,17 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val batchRecords = mutableListOf<Pair<String, Map<String, Any>>>()
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
+                // Only keyguard transitions are eligible for syncing.
+                // No app foreground/background activity is uploaded.
                 val type = when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.MOVE_TO_FOREGROUND -> "APP_FOREGROUND"
-                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.MOVE_TO_BACKGROUND -> "APP_BACKGROUND"
                     UsageEvents.Event.KEYGUARD_SHOWN -> "SCREEN_LOCKED"
                     UsageEvents.Event.KEYGUARD_HIDDEN -> "SCREEN_UNLOCKED"
                     else -> null
                 } ?: continue
-                val pkg = event.packageName ?: continue
-                if (pkg == applicationContext.packageName) continue
+                val pkg = "android.keyguard"
                 val ts = event.timeStamp
                 val id = sha256("$type|$pkg|$ts")
-                val label = try { applicationContext.packageManager.getApplicationLabel(applicationContext.packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+                val label = "Device lock state"
                 val record = hashMapOf<String, Any>(
                     "eventId" to id, "deviceId" to deviceId, "eventType" to type,
                     "packageName" to pkg, "applicationLabel" to label,
