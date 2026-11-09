@@ -54,3 +54,19 @@ With sharing consent, Usage Access and an explicitly selected phone, Personal_Ap
 A successful worker uploads immutable lock/unlock events under `devices/{deviceId}/usageEvents`, then updates `lastSyncAt` and `lastSyncStatus` at most once per minute unless new lock events occur. It records non-sensitive lock sync metadata in `devices/{deviceId}/syncLogs`. If Android exposes no keyguard event for a particular device, no synthetic lock event is invented.
 
 The **manual phone selection is mandatory**. For upgraded older installs, the new app requires fresh confirmation because previous versions silently selected the only enrolled phone.
+
+## Live microphone sharing after minimizing and locking
+
+1. In Personal_App sign in, manually select the correct physical device in Account, enable Home sharing and open Live.
+2. Approve that specific microphone session and grant Android RECORD_AUDIO. On Android 13+, allow notification permission as well so the ongoing Stop notification is visible.
+3. Tap Start. An explicit foreground service of type `microphone` owns the WebRTC peer. You can switch apps and lock the display without destroying the active service; the notification includes a Stop action.
+4. In Admin_App select the same named phone, open Live and tap Listen. Incoming audio level and speaker/mute output controls appear.
+5. To end, use Personal_App > Live > Stop, Home > Stop sharing, Sign out, or the persistent notification's Stop action.
+
+If WebRTC reports DISCONNECTED or FAILED during this owner-started session, Personal_App waits briefly and attempts to create up to three replacement offers; Admin attempts to rejoin within two minutes of its initial join. Networking/ICE/TURN limitations and OEM battery management may still prevent recovery. This is not a guarantee that every phone remains connected.
+
+**No invisible or reboot-persistent microphone capture.** The service returns `START_NOT_STICKY`. Android may stop it under memory pressure; a force-stop, crash or reboot requires a fresh owner-started session. A previously granted RECORD_AUDIO permission does not authorize starting a microphone foreground service from BOOT_COMPLETED on Android 14+. No background microphone activation is implemented.
+
+## SMS, calls and screen events while app is in background
+
+Personal_App maintains an independent WorkManager periodic backup for calls, owner-opt-in SMS and usage-keyguard events. Each worker stores a last processed timestamp and reads newer records on subsequent runs; it does **not** rescan all available records every 15 seconds. Periodic WorkManager runs at a **minimum scheduled interval of 15 minutes**, and Android's doze, battery policies and connectivity can defer delivery. When Personal_App is visible, SMS/call content observers and 15-second lock checks can queue earlier work. There is no promise of a 15-second background cadence. User may revoke sharing or disable each backup from the app; the Admin phone does not read Android's local call/SMS providers.
