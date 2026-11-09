@@ -9,6 +9,9 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import java.security.MessageDigest
 import java.util.Date
 import java.util.TimeZone
@@ -24,6 +27,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 "Choose this phone under Account to enable lock synchronization.").apply()
             return Result.failure()
         }
+        prefs.edit().putLong("last_lock_attempt_$selected", System.currentTimeMillis()).apply()
         if (!hasUsageAccess(applicationContext)) {
             prefs.edit().putString("last_lock_error",
                 "Android Usage Access is off. Enable it under Access > Screen lock events.").apply()
@@ -70,19 +74,22 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
                 val batch = db.batch()
                 chunk.forEach { (id, record) -> batch.set(db.collection("devices").document(deviceId).collection("usageEvents").document(id), record) }
-                batch.commit().await()
+                withTimeout(30_000L) { batch.commit().await() }
             }
             if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
             val lastHeartbeat = prefs.getLong("last_heartbeat_$deviceId", 0L)
             // Avoid excessive Firebase writes while performing inexpensive 15-second
             // app-foreground checks. Heartbeat once per minute, or on a new event.
             if (batchRecords.isNotEmpty() || now - lastHeartbeat >= 60_000L) {
-                device.reference.update(
-                    mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")
-                ).await()
+                withTimeout(30_000L) {
+                    device.reference.update(
+                        mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")
+                    ).await()
+                }
                 prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
             }
             prefs.edit().putLong(cursorKey, now)
+                .putLong("last_lock_success_$deviceId", System.currentTimeMillis())
                 .putString("last_lock_error", "").apply()
             if (batchRecords.isEmpty() &&
                 now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
@@ -112,8 +119,16 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 }
             }
             Result.success()
+        } catch (e: TimeoutCancellationException) {
+            val reason = "Lock sync timed out waiting for Firebase. Check internet and Firestore rules."
+            prefs.edit().putString("last_lock_error", reason).apply()
+            CollectorDiagnostics.record(applicationContext, "LOCK", reason)
+            Result.retry()
+        } catch (e: CancellationException) {
+            // WorkManager cancelled an old check. Do not record a false Firebase error.
+            throw e
         } catch (e: Exception) {
-            val reason = "Lock sync failed: ${e.localizedMessage?.take(160) ?: e.javaClass.simpleName}"
+            val reason = "Lock sync failed (${e.javaClass.simpleName}): ${e.localizedMessage?.take(160) ?: "Unknown error"}"
             prefs.edit().putString("last_lock_error", reason).apply()
             CollectorDiagnostics.record(applicationContext, "LOCK", reason)
             Result.retry()
