@@ -135,7 +135,7 @@ class PersonalApp : Application() {
                 !hasUsageAccess(this@PersonalApp)) return
             // Capture a truthful screen transition while this process is alive.
             // ACTION_SCREEN_OFF is not necessarily a verified secure lock.
-            val transition = when (intent.action) {
+            val transition = when (intent?.action) {
                 Intent.ACTION_SCREEN_OFF -> "SCREEN_OFF"
                 Intent.ACTION_SCREEN_ON -> "SCREEN_ON"
                 Intent.ACTION_USER_PRESENT -> "SCREEN_UNLOCKED"
