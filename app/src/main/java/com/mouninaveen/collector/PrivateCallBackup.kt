@@ -15,6 +15,8 @@ import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,7 +73,10 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
     val currentOwner = auth.currentUser?.uid
     val ownerMatches = currentOwner != null && prefs.getString(CallBackupWorker.OWNER, "") == currentOwner
     val selectedDeviceId = currentOwner?.let { DeviceBinding.selectedId(context, it) }
-    val lastSuccess = prefs.getLong(CallBackupWorker.LAST_SUCCESS, 0L)
+    // Never report a different enrolled phone's backup as this phone's success.
+    val lastSuccess = selectedDeviceId?.let {
+        prefs.getLong("${CallBackupWorker.LAST_SUCCESS}_$it", 0L)
+    } ?: 0L
     val lastError = prefs.getString(CallBackupWorker.LAST_ERROR, "").orEmpty()
     val lastCount = prefs.getInt(CallBackupWorker.LAST_COUNT, 0)
 
@@ -177,6 +182,13 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
             }
         }
     }
-    // Re-evaluate persisted progress whenever the user opens this tab or presses Refresh.
+    // Re-read worker results while this tab is visible; WorkManager updates prefs,
+    // not Compose state. Stop polling as soon as the tab leaves composition.
+    LaunchedEffect(selectedDeviceId) {
+        while (isActive) {
+            delay(4_000L)
+            refreshed++
+        }
+    }
     key(refreshed) { }
 }
