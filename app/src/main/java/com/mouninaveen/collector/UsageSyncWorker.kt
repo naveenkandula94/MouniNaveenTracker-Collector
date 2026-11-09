@@ -71,6 +71,20 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 CollectorDiagnostics.record(
                     applicationContext, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
                 )
+                try {
+                    device.reference.collection("syncLogs").add(
+                        mapOf(
+                            "eventType" to "LOCK_SYNC",
+                            "count" to batchRecords.size,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "status" to "SUCCESS"
+                        )
+                    ).await()
+                } catch (_: Exception) {
+                    CollectorDiagnostics.record(
+                        applicationContext, "LOCK", "Lock events uploaded; remote diagnostic log not available."
+                    )
+                }
             }
             Result.success()
         } catch (e: Exception) {
