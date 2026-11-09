@@ -3,9 +3,9 @@
 ## Features and limitations
 
 - **Live audio**: Collector owner explicitly checks the consent box, grants `RECORD_AUDIO`, and presses **Start live microphone**. Admin logs in, selects the enrolled device under **Live audio**, selects **Find live session**, then **Listen now**. WebRTC transmits audio, not Firebase.
-- Collector must remain visible/open for this version. Closing it stops local WebRTC audio; no background microphone foreground service is installed. The Android system microphone privacy indicator remains visible.
-- **Call history**: The Collector can attempt to read its own phone's latest 12 call records via the Android `CallLog.Calls` provider. After a local preview and selection, the owner must approve **each upload** of selected records to Firestore. No automatic background call-log collection.
-- Modern Android treats `READ_CALL_LOG` as a **hard restricted permission**. The installer must allowlist it; the user cannot bypass that restriction by accepting an in-app consent checkbox. If Android denies it, the **CSV import** feature remains available.
+- Collector must remain in the foreground for this version. Switching between Collector tabs now retains an active session; closing or backgrounding the app is not guaranteed to keep microphone access. No background microphone foreground service is installed. The Android system microphone privacy indicator remains visible.
+- **Call history**: The Collector can attempt to read its own phone's latest 12 call records via the Android `CallLog.Calls` provider. After a local preview and selection, the owner must approve the chosen records before sharing them with Admin through Firestore. No automatic background copying of private call history.
+- Modern Android treats `READ_CALL_LOG` as a **hard restricted permission**. The installer must allowlist it; the user cannot bypass that restriction by accepting an in-app consent checkbox. If Android denies the permission, the Collector cannot read local call history through the Android call-log provider.
 - Audio connection uses WebRTC STUN. A TURN server must be configured for reliable connectivity on some mobile networks. No audio recordings are stored in Firebase. SDP and ICE signaling are temporarily stored in Firestore until removed by an administrator.
 - This is a preview implementation. Validate real-device signaling, reconnection and session cleanup before production deployment.
 
@@ -52,3 +52,11 @@ firebase firestore:delete devices --recursive --project mouninaveentracker --dat
 ```
 
 This is destructive. Export data first if needed. Keep Collector sharing off during cleanup.
+
+## Simplified navigation (current feature branch)
+
+Collector tabs: **Home**, **Calls**, **Live audio**, **Account**, **Logs**. The old CSV import control was removed. The local diagnostic log is available in Logs.
+
+Admin tabs: **Home**, **Calls**, **Live audio**, **Settings**. Diagnostics and the optional device pairing UI are under Settings. The same authenticated user may be used for a controlled single-account test, but separate accounts are more secure for actual sharing.
+
+If Admin shows an empty live session list while Collector reports CLOSED, start a fresh Collector session from Live audio. The Apps must have updated Firestore rules deployed. Check Collector Logs for Firebase signaling errors. STUN alone is not sufficient on all mobile networks.
