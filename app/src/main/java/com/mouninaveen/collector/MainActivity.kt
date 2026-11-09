@@ -249,6 +249,7 @@ class MainActivity : ComponentActivity() {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
                         Text("PERSONAL APP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Text("Personal dashboard", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("v1.1.2 • 60-second sync while visible", style = MaterialTheme.typography.labelSmall)
                         Text(
                             "${if (signedIn) "Signed in" else "Not signed in"}  •  ${if (consent) "Sharing enabled" else "Sharing off"}",
                             style = MaterialTheme.typography.bodySmall
