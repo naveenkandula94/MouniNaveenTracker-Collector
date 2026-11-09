@@ -18,7 +18,17 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         val prefs = applicationContext.getSharedPreferences("collector", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("consent", false)) return Result.success()
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return Result.retry()
-        if (!hasUsageAccess(applicationContext)) return Result.success()
+        val selected = DeviceBinding.selectedId(applicationContext, uid)
+        if (selected == null) {
+            prefs.edit().putString("last_lock_error",
+                "Choose this phone under Account to enable lock synchronization.").apply()
+            return Result.failure()
+        }
+        if (!hasUsageAccess(applicationContext)) {
+            prefs.edit().putString("last_lock_error",
+                "Android Usage Access is off. Enable it under Access > Screen lock events.").apply()
+            return Result.failure()
+        }
         return try {
             val db = FirebaseFirestore.getInstance()
             val device = DeviceBinding.resolve(applicationContext, uid)
@@ -72,7 +82,8 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 ).await()
                 prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
             }
-            prefs.edit().putLong(cursorKey, now).apply()
+            prefs.edit().putLong(cursorKey, now)
+                .putString("last_lock_error", "").apply()
             if (batchRecords.isEmpty() &&
                 now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
                 CollectorDiagnostics.record(
@@ -102,8 +113,9 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             }
             Result.success()
         } catch (e: Exception) {
-            CollectorDiagnostics.record(applicationContext, "LOCK",
-                "Lock sync failed: ${e.javaClass.simpleName}")
+            val reason = "Lock sync failed: ${e.localizedMessage?.take(160) ?: e.javaClass.simpleName}"
+            prefs.edit().putString("last_lock_error", reason).apply()
+            CollectorDiagnostics.record(applicationContext, "LOCK", reason)
             Result.retry()
         }
     }
