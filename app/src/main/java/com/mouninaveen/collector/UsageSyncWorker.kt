@@ -75,7 +75,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             // Process-scoped Android screen broadcasts supplement keyguard
             // UsageStats events on OEMs that omit them. They are accurately
             // distinguished from confirmed locks; only USER_PRESENT means unlock.
-            val transition = inputData.getString("screen_transition")
+            val transition = inputData.getString("screen_transition").orEmpty()
             val transitionTime = inputData.getLong("screen_transition_at", 0L)
             if (transition in setOf("SCREEN_ON", "SCREEN_OFF", "SCREEN_UNLOCKED") &&
                 transitionTime in (now - 7L * 86400000L)..(now + 60_000L)) {
