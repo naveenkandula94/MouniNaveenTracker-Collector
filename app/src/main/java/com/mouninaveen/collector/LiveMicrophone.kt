@@ -132,8 +132,11 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
         permissionGranted = granted
         if (granted) begin() else onStatus("Microphone permission denied. No audio sent.")
     }
+    // Snapshot the specific session: capturing mutable state closed the newly started
+    // PeerConnection when DisposableEffect was restarted after Start was pressed.
     DisposableEffect(session) {
-        onDispose { session?.stop() }
+        val currentSession = session
+        onDispose { currentSession?.stop() }
     }
     LaunchedEffect(sharingEnabled) {
         if (!sharingEnabled && session != null) {
