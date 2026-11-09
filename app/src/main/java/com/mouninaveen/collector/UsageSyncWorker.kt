@@ -60,7 +60,7 @@ internal object UsageSyncEngine {
             val now = System.currentTimeMillis()
             // Different phones share a Firebase UID, but never share an event cursor.
             // First scan asks Android for its available keyguard events over 7 days.
-            // Future runs scan only the new interval with a short overlap for reliability.
+            // Future runs scan with overlap but only upload events newer than the saved cursor.
             val cursorKey = "last_sync_$deviceId"
             val lastSuccess = prefs.getLong(cursorKey, 0L)
             val from = if (lastSuccess == 0L) now - 7L * 24 * 60 * 60 * 1000
@@ -80,6 +80,9 @@ internal object UsageSyncEngine {
                 } ?: continue
                 val pkg = "android.keyguard"
                 val ts = event.timeStamp
+                // The read overlap must never rewrite a previously published
+                // event. Firestore rules allow create but deliberately deny update.
+                if (lastSuccess > 0L && ts <= lastSuccess) continue
                 val id = sha256("$type|$pkg|$ts")
                 val label = "Device lock state"
                 val record = hashMapOf<String, Any>(
