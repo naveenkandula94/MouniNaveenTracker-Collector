@@ -21,10 +21,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         if (!hasUsageAccess(applicationContext)) return Result.success()
         return try {
             val db = FirebaseFirestore.getInstance()
-            val devices = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
-            if (devices.isEmpty) return Result.failure()
-            val device = devices.documents.firstOrNull { it.getBoolean("enabled") != false }
-                ?: return Result.success()
+            val device = DeviceBinding.resolve(applicationContext, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
             val from = prefs.getLong("last_sync", now - 24L * 60 * 60 * 1000).coerceAtMost(now - 60_000)
@@ -34,18 +31,17 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val batchRecords = mutableListOf<Pair<String, Map<String, Any>>>()
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
+                // Only keyguard transitions are eligible for syncing.
+                // No app foreground/background activity is uploaded.
                 val type = when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.MOVE_TO_FOREGROUND -> "APP_FOREGROUND"
-                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.MOVE_TO_BACKGROUND -> "APP_BACKGROUND"
                     UsageEvents.Event.KEYGUARD_SHOWN -> "SCREEN_LOCKED"
                     UsageEvents.Event.KEYGUARD_HIDDEN -> "SCREEN_UNLOCKED"
                     else -> null
                 } ?: continue
-                val pkg = event.packageName ?: continue
-                if (pkg == applicationContext.packageName) continue
+                val pkg = "android.keyguard"
                 val ts = event.timeStamp
                 val id = sha256("$type|$pkg|$ts")
-                val label = try { applicationContext.packageManager.getApplicationLabel(applicationContext.packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+                val label = "Device lock state"
                 val record = hashMapOf<String, Any>(
                     "eventId" to id, "deviceId" to deviceId, "eventType" to type,
                     "packageName" to pkg, "applicationLabel" to label,
@@ -61,10 +57,49 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 batch.commit().await()
             }
             if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
-            device.reference.update(mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")).await()
+            val lastHeartbeat = prefs.getLong("last_heartbeat_$deviceId", 0L)
+            // Avoid excessive Firebase writes while performing inexpensive 15-second
+            // app-foreground checks. Heartbeat once per minute, or on a new event.
+            if (batchRecords.isNotEmpty() || now - lastHeartbeat >= 60_000L) {
+                device.reference.update(
+                    mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")
+                ).await()
+                prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
+            }
             prefs.edit().putLong("last_sync", now).apply()
+            if (batchRecords.isEmpty() &&
+                now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
+                CollectorDiagnostics.record(
+                    applicationContext, "LOCK",
+                    "Checked Usage Access: no new Android keyguard events were exposed."
+                )
+                prefs.edit().putLong("last_no_event_log_$deviceId", now).apply()
+            }
+            if (batchRecords.isNotEmpty()) {
+                CollectorDiagnostics.record(
+                    applicationContext, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
+                )
+                try {
+                    device.reference.collection("syncLogs").add(
+                        mapOf(
+                            "eventType" to "LOCK_SYNC",
+                            "count" to batchRecords.size,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "status" to "SUCCESS"
+                        )
+                    ).await()
+                } catch (_: Exception) {
+                    CollectorDiagnostics.record(
+                        applicationContext, "LOCK", "Lock events uploaded; remote diagnostic log not available."
+                    )
+                }
+            }
             Result.success()
-        } catch (_: Exception) { Result.retry() }
+        } catch (e: Exception) {
+            CollectorDiagnostics.record(applicationContext, "LOCK",
+                "Lock sync failed: ${e.javaClass.simpleName}")
+            Result.retry()
+        }
     }
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 }
