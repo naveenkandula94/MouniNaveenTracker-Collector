@@ -43,7 +43,7 @@ internal fun FirebaseSyncCheck() {
                 results = listOf("Contacting Firebase server…")
                 scope.launch {
                     val lines = mutableListOf<String>()
-                    suspend fun check(label: String, action: suspend () -> String) {
+                    suspend fun verifyPath(label: String, action: suspend () -> String) {
                         try {
                             lines += "✓ $label: ${withTimeout(15_000L) { action() }}"
                         } catch (e: Exception) {
@@ -53,7 +53,7 @@ internal fun FirebaseSyncCheck() {
                         results = lines.toList()
                     }
                     val device = db.collection("devices").document(selected)
-                    check("Selected phone enrollment") {
+                    verifyPath("Selected phone enrollment") {
                         val document = device.get(Source.SERVER).await()
                         check(document.exists() && document.getString("collectorUid") == owner) {
                             "This account is not enrolled for the selected phone."
@@ -61,23 +61,23 @@ internal fun FirebaseSyncCheck() {
                         check(document.getBoolean("enabled") != false) { "Enrollment disabled." }
                         document.getString("displayName") ?: "Active enrollment"
                     }
-                    check("Call backup storage") {
+                    verifyPath("Call backup storage") {
                         db.collection("users").document(owner)
                             .collection("deviceCallBackups").document(selected)
                             .collection("calls").count().get(AggregateSource.SERVER)
                             .await().count.toString() + " stored"
                     }
-                    check("SMS backup storage") {
+                    verifyPath("SMS backup storage") {
                         db.collection("users").document(owner)
                             .collection("deviceSmsBackups").document(selected)
                             .collection("messages").count().get(AggregateSource.SERVER)
                             .await().count.toString() + " stored"
                     }
-                    check("Lock/unlock history") {
+                    verifyPath("Lock/unlock history") {
                         device.collection("usageEvents").count().get(AggregateSource.SERVER)
                             .await().count.toString() + " stored"
                     }
-                    check("Microphone signaling access") {
+                    verifyPath("Microphone signaling access") {
                         device.collection("liveAudio").count().get(AggregateSource.SERVER)
                             .await().count.toString() + " sessions"
                     }
