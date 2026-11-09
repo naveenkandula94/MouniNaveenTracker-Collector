@@ -67,8 +67,8 @@ internal object BackgroundSyncCoordinator {
     }
 
     /**
-     * Explicit owner-requested check. A separate one-time request cannot be
-     * blocked by an old, still-retrying automatic KEEP request. This never
+     * Explicit owner-requested check. A separate one-time request is independent
+     * of the automatic worker. KEEP avoids cancelling an in-flight manual check. This never
      * triggers microphone capture or changes a permission.
      */
     fun syncNow(context: Context) {
@@ -81,7 +81,7 @@ internal object BackgroundSyncCoordinator {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED).build()
             WorkManager.getInstance(context).enqueueUniqueWork(
-                "lock-check-manual", ExistingWorkPolicy.REPLACE,
+                "lock-check-manual", ExistingWorkPolicy.KEEP,
                 OneTimeWorkRequestBuilder<UsageSyncWorker>()
                     .setConstraints(constraints)
                     .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
