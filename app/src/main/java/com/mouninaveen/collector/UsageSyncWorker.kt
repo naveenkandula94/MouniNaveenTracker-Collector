@@ -67,6 +67,14 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
             }
             prefs.edit().putLong("last_sync", now).apply()
+            if (batchRecords.isEmpty() &&
+                now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
+                CollectorDiagnostics.record(
+                    applicationContext, "LOCK",
+                    "Checked Usage Access: no new Android keyguard events were exposed."
+                )
+                prefs.edit().putLong("last_no_event_log_$deviceId", now).apply()
+            }
             if (batchRecords.isNotEmpty()) {
                 CollectorDiagnostics.record(
                     applicationContext, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
