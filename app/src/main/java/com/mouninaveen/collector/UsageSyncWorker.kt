@@ -21,10 +21,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
         if (!hasUsageAccess(applicationContext)) return Result.success()
         return try {
             val db = FirebaseFirestore.getInstance()
-            val devices = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
-            if (devices.isEmpty) return Result.failure()
-            val device = devices.documents.firstOrNull { it.getBoolean("enabled") != false }
-                ?: return Result.success()
+            val device = DeviceBinding.resolve(applicationContext, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
             val from = prefs.getLong("last_sync", now - 24L * 60 * 60 * 1000).coerceAtMost(now - 60_000)
