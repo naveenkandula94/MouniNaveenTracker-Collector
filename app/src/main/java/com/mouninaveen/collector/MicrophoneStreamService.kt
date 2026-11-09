@@ -115,11 +115,18 @@ class MicrophoneStreamService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 endSession("Microphone stopped by phone owner.")
-                stopSelf()
+                // Don't let a delayed Stop command destroy a later Start
+                // intent delivered to the same Android service instance.
+                stopSelfResult(startId)
                 return START_NOT_STICKY
             }
             ACTION_START -> {
                 if (isStarted) return START_NOT_STICKY
+                if (scope.coroutineContext[Job]?.isActive != true) {
+                    MicStreamStatus.status("Microphone service was shutting down. Tap Start again.")
+                    stopSelfResult(startId)
+                    return START_NOT_STICKY
+                }
                 // A microphone FGS must be created while the owner still has
                 // a visible Activity and RECORD_AUDIO is in its while-in-use scope.
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
