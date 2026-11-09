@@ -18,6 +18,9 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FieldValue
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import java.util.Date
 import java.util.concurrent.TimeUnit
 
@@ -118,7 +121,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         if (!prefs.getBoolean(ENABLED, false) ||
                             !context.getSharedPreferences("collector", Context.MODE_PRIVATE).getBoolean("consent", false) ||
                             prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid) return Result.success()
-                        batch.commit().await()
+                        withTimeout(30_000L) { batch.commit().await() }
                         pending = 0
                         batch = database.batch()
                     }
@@ -126,7 +129,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             }
             if (pending > 0) {
                 if (!prefs.getBoolean(ENABLED, false) || prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid) return Result.success()
-                batch.commit().await()
+                withTimeout(30_000L) { batch.commit().await() }
             }
             prefs.edit()
                 .putLong("${LAST_CALL_DATE}_$deviceId", newest)
@@ -158,9 +161,17 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             prefs.edit().putString(LAST_ERROR, "Android denied call-log access: ${e.localizedMessage}").apply()
             CollectorDiagnostics.record(context, "BACKUP", "Android call-log permission denied.")
             Result.failure()
+        } catch (e: TimeoutCancellationException) {
+            val reason = "Firebase backup write timed out. Check internet and per-phone Firestore rules."
+            prefs.edit().putString(LAST_ERROR, reason).apply()
+            CollectorDiagnostics.record(context, "BACKUP", reason)
+            Result.retry()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            prefs.edit().putString(LAST_ERROR, e.localizedMessage?.take(180) ?: "Sync failed").apply()
-            CollectorDiagnostics.record(context, "BACKUP", "Private backup error: ${e.javaClass.simpleName}")
+            val reason = "Firebase backup failed (${e.javaClass.simpleName}): ${e.localizedMessage?.take(160) ?: "Unknown error"}"
+            prefs.edit().putString(LAST_ERROR, reason).apply()
+            CollectorDiagnostics.record(context, "BACKUP", reason)
             Result.retry()
         }
     }
