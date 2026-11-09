@@ -60,7 +60,7 @@ service cloud.firestore {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId)
      && request.resource.data.keys().hasOnly(['eventType','count','timestamp','status'])
      && request.resource.data.keys().hasAll(['eventType','count','timestamp','status'])
-     && request.resource.data.eventType == 'CALL_BACKUP'
+     && request.resource.data.eventType in ['CALL_BACKUP','LOCK_SYNC']
      && request.resource.data.status == 'SUCCESS'
      && request.resource.data.count is int
      && request.resource.data.count >= 0
