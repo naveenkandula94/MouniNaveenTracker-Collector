@@ -3,49 +3,88 @@ package com.mouninaveen.collector
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
+import androidx.work.ListenableWorker.Result
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import java.security.MessageDigest
 import java.util.Date
 import java.util.TimeZone
 
 class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
-    override suspend fun doWork(): Result {
-        val prefs = applicationContext.getSharedPreferences("collector", Context.MODE_PRIVATE)
+    override suspend fun doWork(): Result = UsageSyncEngine.sync(applicationContext)
+}
+
+/**
+ * Shares exactly one Firebase sync implementation between immediate visible-app
+ * checks and durable WorkManager retries. No extra in-memory record queue.
+ */
+internal object UsageSyncEngine {
+    private val syncMutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun sync(context: Context): Result {
+        syncMutex.lock()
+        try {
+            return syncLocked(context)
+        } finally {
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncLocked(context: Context): Result {
+        val prefs = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
         if (!prefs.getBoolean("consent", false)) return Result.success()
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return Result.retry()
-        if (!hasUsageAccess(applicationContext)) return Result.success()
+        val selected = DeviceBinding.selectedId(context, uid)
+        if (selected == null) {
+            prefs.edit().putString("last_lock_error",
+                "Choose this phone under Account to enable lock synchronization.").apply()
+            return Result.failure()
+        }
+        prefs.edit().putLong("last_lock_attempt_$selected", System.currentTimeMillis()).apply()
+        if (!hasUsageAccess(context)) {
+            prefs.edit().putString("last_lock_error",
+                "Android Usage Access is off. Enable it under Access > Screen lock events.").apply()
+            return Result.failure()
+        }
         return try {
             val db = FirebaseFirestore.getInstance()
-            val devices = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
-            if (devices.isEmpty) return Result.failure()
-            val device = devices.documents.firstOrNull { it.getBoolean("enabled") != false }
-                ?: return Result.success()
+            val device = DeviceBinding.resolve(context, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
-            val from = prefs.getLong("last_sync", now - 24L * 60 * 60 * 1000).coerceAtMost(now - 60_000)
-            val manager = applicationContext.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+            // Different phones share a Firebase UID, but never share an event cursor.
+            // First scan asks Android for its available keyguard events over 7 days.
+            // Future runs scan with overlap but only upload events newer than the saved cursor.
+            val cursorKey = "last_sync_$deviceId"
+            val lastSuccess = prefs.getLong(cursorKey, 0L)
+            val from = if (lastSuccess == 0L) now - 7L * 24 * 60 * 60 * 1000
+                       else (lastSuccess - 60_000L).coerceAtMost(now - 60_000L)
+            val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val events = manager.queryEvents(from, now)
             val event = UsageEvents.Event()
             val batchRecords = mutableListOf<Pair<String, Map<String, Any>>>()
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
+                // Only keyguard transitions are eligible for syncing.
+                // No app foreground/background activity is uploaded.
                 val type = when (event.eventType) {
-                    UsageEvents.Event.ACTIVITY_RESUMED, UsageEvents.Event.MOVE_TO_FOREGROUND -> "APP_FOREGROUND"
-                    UsageEvents.Event.ACTIVITY_PAUSED, UsageEvents.Event.MOVE_TO_BACKGROUND -> "APP_BACKGROUND"
                     UsageEvents.Event.KEYGUARD_SHOWN -> "SCREEN_LOCKED"
                     UsageEvents.Event.KEYGUARD_HIDDEN -> "SCREEN_UNLOCKED"
                     else -> null
                 } ?: continue
-                val pkg = event.packageName ?: continue
-                if (pkg == applicationContext.packageName) continue
+                val pkg = "android.keyguard"
                 val ts = event.timeStamp
+                // The read overlap must never rewrite a previously published
+                // event. Firestore rules allow create but deliberately deny update.
+                if (lastSuccess > 0L && ts <= lastSuccess) continue
                 val id = sha256("$type|$pkg|$ts")
-                val label = try { applicationContext.packageManager.getApplicationLabel(applicationContext.packageManager.getApplicationInfo(pkg, 0)).toString() } catch (_: Exception) { pkg }
+                val label = "Device lock state"
                 val record = hashMapOf<String, Any>(
                     "eventId" to id, "deviceId" to deviceId, "eventType" to type,
                     "packageName" to pkg, "applicationLabel" to label,
@@ -58,13 +97,65 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
                 val batch = db.batch()
                 chunk.forEach { (id, record) -> batch.set(db.collection("devices").document(deviceId).collection("usageEvents").document(id), record) }
-                batch.commit().await()
+                withTimeout(30_000L) { batch.commit().await() }
             }
             if (!prefs.getBoolean("consent", false) || FirebaseAuth.getInstance().currentUser?.uid != uid) return Result.success()
-            device.reference.update(mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")).await()
-            prefs.edit().putLong("last_sync", now).apply()
+            val lastHeartbeat = prefs.getLong("last_heartbeat_$deviceId", 0L)
+            // Avoid excess writes. The foreground checks run once per minute.
+            // Heartbeat once per minute, or on a new event.
+            if (batchRecords.isNotEmpty() || now - lastHeartbeat >= 60_000L) {
+                withTimeout(30_000L) {
+                    device.reference.update(
+                        mapOf("lastSyncAt" to FieldValue.serverTimestamp(), "lastSyncStatus" to "SYNCED")
+                    ).await()
+                }
+                prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
+            }
+            prefs.edit().putLong(cursorKey, now)
+                .putLong("last_lock_success_$deviceId", System.currentTimeMillis())
+                .putString("last_lock_error", "").apply()
+            if (batchRecords.isEmpty() &&
+                now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
+                CollectorDiagnostics.record(
+                    context, "LOCK",
+                    "Checked Usage Access: no new Android keyguard events were exposed."
+                )
+                prefs.edit().putLong("last_no_event_log_$deviceId", now).apply()
+            }
+            if (batchRecords.isNotEmpty()) {
+                CollectorDiagnostics.record(
+                    context, "LOCK", "Uploaded ${batchRecords.size} lock/unlock event(s)."
+                )
+                try {
+                    device.reference.collection("syncLogs").add(
+                        mapOf(
+                            "eventType" to "LOCK_SYNC",
+                            "count" to batchRecords.size,
+                            "timestamp" to FieldValue.serverTimestamp(),
+                            "status" to "SUCCESS"
+                        )
+                    ).await()
+                } catch (_: Exception) {
+                    CollectorDiagnostics.record(
+                        context, "LOCK", "Lock events uploaded; remote diagnostic log not available."
+                    )
+                }
+            }
             Result.success()
-        } catch (_: Exception) { Result.retry() }
+        } catch (e: TimeoutCancellationException) {
+            val reason = "Lock sync timed out waiting for Firebase. Check internet and Firestore rules."
+            prefs.edit().putString("last_lock_error", reason).apply()
+            CollectorDiagnostics.record(context, "LOCK", reason)
+            Result.retry()
+        } catch (e: CancellationException) {
+            // WorkManager cancelled an old check. Do not record a false Firebase error.
+            throw e
+        } catch (e: Exception) {
+            val reason = "Lock sync failed (${e.javaClass.simpleName}): ${e.localizedMessage?.take(160) ?: "Unknown error"}"
+            prefs.edit().putString("last_lock_error", reason).apply()
+            CollectorDiagnostics.record(context, "LOCK", reason)
+            Result.retry()
+        }
     }
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 }
