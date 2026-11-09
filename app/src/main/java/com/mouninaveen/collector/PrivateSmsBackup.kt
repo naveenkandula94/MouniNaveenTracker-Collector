@@ -15,6 +15,8 @@ import androidx.core.content.ContextCompat
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -164,7 +166,9 @@ internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
             Text("Phone: ${deviceId ?: "Select this phone in Account first"}")
             Text("READ_SMS: ${if (permitted) "Granted" else "Not granted / restricted"}")
             Text("Backup: ${if (enabled && prefs.getString(SmsBackupWorker.OWNER, "") == uid) "On" else "Off"}")
-            val last = prefs.getLong(SmsBackupWorker.LAST_SUCCESS, 0L)
+            val last = deviceId?.let {
+                prefs.getLong("${SmsBackupWorker.LAST_SUCCESS}_$it", 0L)
+            } ?: 0L
             if (last > 0L) {
                 Text("Last saved: ${SimpleDateFormat("dd MMM yyyy HH:mm", Locale.getDefault()).format(Date(last))}")
                 Text("Messages checked in last run: ${prefs.getInt(SmsBackupWorker.LAST_COUNT, 0)}")
@@ -204,6 +208,12 @@ internal fun PrivateSmsBackup(onStatus: (String) -> Unit) {
                 "checks are periodic and can be delayed. No WhatsApp or Instagram chats are accessed.",
                 style = MaterialTheme.typography.bodySmall
             )
+        }
+    }
+    LaunchedEffect(deviceId) {
+        while (isActive) {
+            delay(4_000L)
+            refresh++
         }
     }
     key(refresh) {}
