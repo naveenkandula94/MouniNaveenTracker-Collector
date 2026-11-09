@@ -31,7 +31,7 @@ service cloud.firestore {
       && request.resource.data.callId == callId
       && request.resource.data.deviceId == deviceId
       && request.resource.data.sharedByUid == request.auth.uid
-      && request.resource.data.source == 'USER_IMPORTED_CSV'
+      && request.resource.data.source in ['USER_IMPORTED_CSV','USER_APPROVED_DEVICE_CALL_LOG']
       && request.resource.data.schemaVersion == 1
       && request.resource.data.number is string
       && request.resource.data.number.size() > 0
