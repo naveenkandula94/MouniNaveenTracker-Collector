@@ -44,6 +44,8 @@ internal class LiveAudioPeer(
     private val pendingIce = mutableListOf<IceCandidate>()
     private var remoteReady = false
     @Volatile private var closed = false
+    private var lastEnergy: Double? = null
+    private var lastSampleDuration: Double? = null
 
     init {
         init(context)
@@ -163,10 +165,30 @@ internal class LiveAudioPeer(
                 val amplitudes = matching.mapNotNull { stat ->
                     (stat.members["audioLevel"] as? Number)?.toDouble()
                 }
-                val measured = amplitudes.maxOrNull() ?: 0.0
+                var measured = amplitudes.maxOrNull()
+                if (measured == null) {
+                    // Some native WebRTC builds report only cumulative audio energy.
+                    // Its derivative is mean square audio amplitude in the interval.
+                    val currentEnergy = matching.mapNotNull {
+                        (it.members["totalAudioEnergy"] as? Number)?.toDouble()
+                    }.maxOrNull()
+                    val currentDuration = matching.mapNotNull {
+                        (it.members["totalSamplesDuration"] as? Number)?.toDouble()
+                    }.maxOrNull()
+                    if (currentEnergy != null && currentDuration != null) {
+                        val deltaEnergy = lastEnergy?.let { currentEnergy - it }
+                        val deltaDuration = lastSampleDuration?.let { currentDuration - it }
+                        if (deltaEnergy != null && deltaDuration != null && deltaDuration > 0.0) {
+                            measured = sqrt((deltaEnergy / deltaDuration).coerceIn(0.0, 1.0))
+                        }
+                        lastEnergy = currentEnergy
+                        lastSampleDuration = currentDuration
+                    }
+                }
+                val levelValue = measured ?: 0.0
                 // WebRTC reports a 0..1 amplitude, which is frequently small
                 // for ordinary speech. Use sqrt for a readable display.
-                onLevel(sqrt(measured.coerceIn(0.0, 1.0)).toFloat())
+                onLevel(sqrt(levelValue.coerceIn(0.0, 1.0)).toFloat())
             })
         } catch (_: Exception) {
             onLevel(0f)
