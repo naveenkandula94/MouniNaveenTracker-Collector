@@ -37,26 +37,37 @@ class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private var callChangeObserver: ContentObserver? = null
 
-    override fun onResume() {
-        super.onResume()
-        if (getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
-                .getBoolean(CallBackupWorker.ENABLED, false) &&
-            FirebaseAuth.getInstance().currentUser?.uid ==
-                getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
-                    .getString(CallBackupWorker.OWNER, "") &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) ==
-                PackageManager.PERMISSION_GRANTED
+    /**
+     * Observe phone call-log changes only while this Activity is visible.
+     * The observer does not read or upload records unless private backup is enabled.
+     */
+    fun refreshCallBackupObserver() {
+        callChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
+        callChangeObserver = null
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) !=
+                PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
+        if (prefs.getBoolean(CallBackupWorker.ENABLED, false) &&
+            FirebaseAuth.getInstance().currentUser?.uid == prefs.getString(CallBackupWorker.OWNER, "")
         ) {
             CallBackupWorker.schedule(this)
-            if (callChangeObserver == null) {
-                callChangeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                    override fun onChange(selfChange: Boolean) {
-                        if (!selfChange) CallBackupWorker.trigger(this@MainActivity)
-                    }
-                }
-                contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callChangeObserver!!)
+        }
+        callChangeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                if (selfChange) return
+                val activePrefs = getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE)
+                val uid = FirebaseAuth.getInstance().currentUser?.uid
+                if (uid != null && activePrefs.getBoolean(CallBackupWorker.ENABLED, false) &&
+                    uid == activePrefs.getString(CallBackupWorker.OWNER, "")
+                ) CallBackupWorker.trigger(this@MainActivity)
             }
         }
+        contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callChangeObserver!!)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshCallBackupObserver()
     }
 
     override fun onPause() {
