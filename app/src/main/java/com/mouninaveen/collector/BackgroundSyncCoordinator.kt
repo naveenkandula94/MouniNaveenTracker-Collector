@@ -67,13 +67,53 @@ internal object BackgroundSyncCoordinator {
     }
 
     fun syncNow(context: Context) {
-        maintain(context, requestCatchUp = true)
+        // A user's explicit Sync Now must not be blocked by a previously
+        // enqueued KEEP work item stuck waiting on retry/backoff.
+        maintain(context, requestCatchUp = false)
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (DeviceBinding.selectedId(context, uid) == null ||
+            !context.getSharedPreferences("collector", Context.MODE_PRIVATE)
+                .getBoolean("consent", false)) return
+        val connected = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED).build()
+        val wm = WorkManager.getInstance(context)
+        fun <T : androidx.work.ListenableWorker> request(
+            name: String, worker: Class<T>
+        ) {
+            val job = OneTimeWorkRequest.Builder(worker)
+                .setConstraints(connected)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                .build()
+            wm.enqueueUniqueWork(name, ExistingWorkPolicy.REPLACE, job)
+        }
+        if (hasUsageAccess(context)) {
+            request("manual-lock-sync", UsageSyncWorker::class.java)
+        }
+        val callPrefs = context.getSharedPreferences(CallBackupWorker.PREFS, Context.MODE_PRIVATE)
+        if (callPrefs.getBoolean(CallBackupWorker.ENABLED, false) &&
+            callPrefs.getString(CallBackupWorker.OWNER, null) == uid &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) ==
+                PackageManager.PERMISSION_GRANTED) {
+            request("manual-call-backup", CallBackupWorker::class.java)
+        }
+        val smsPrefs = context.getSharedPreferences(SmsBackupWorker.PREFS, Context.MODE_PRIVATE)
+        if (smsPrefs.getBoolean(SmsBackupWorker.ENABLED, false) &&
+            smsPrefs.getString(SmsBackupWorker.OWNER, null) == uid &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) ==
+                PackageManager.PERMISSION_GRANTED) {
+            request("manual-sms-backup", SmsBackupWorker::class.java)
+        }
+        CollectorDiagnostics.record(context, "SYNC",
+            "Requested independent immediate checks for enabled services.")
     }
 
     fun stopAll(context: Context) {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(LOCK_WORK)
         wm.cancelUniqueWork("lock-check-auto")
+        wm.cancelUniqueWork("manual-lock-sync")
+        wm.cancelUniqueWork("manual-call-backup")
+        wm.cancelUniqueWork("manual-sms-backup")
         CallBackupWorker.stop(context)
         SmsBackupWorker.stop(context)
         ProcessSyncObservers.refresh(context)
