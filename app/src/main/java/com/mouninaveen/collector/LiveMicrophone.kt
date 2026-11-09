@@ -60,9 +60,7 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                 val uid = auth.currentUser?.uid ?: error("Sign in as the Collector first.")
                 val prefs = context.getSharedPreferences("collector", Context.MODE_PRIVATE)
                 check(prefs.getBoolean("consent", false)) { "Sharing consent is off." }
-                val docs = db.collection("devices").whereEqualTo("collectorUid", uid).get().await()
-                val device = docs.documents.firstOrNull { it.getBoolean("enabled") != false }
-                    ?: error("Enroll and enable this Collector UID in the Admin app first.")
+                val device = DeviceBinding.resolve(context, uid)
                 val ref = device.reference.collection("liveAudio").document()
                 ref.set(mapOf(
                     "collectorUid" to uid,
