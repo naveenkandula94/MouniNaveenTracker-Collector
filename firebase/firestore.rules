@@ -45,8 +45,8 @@ service cloud.firestore {
       && request.resource.data.durationSeconds >= 0
       && request.resource.data.durationSeconds <= 86400
       && request.resource.data.sharedAt == request.time;
-    allow read: if isOwner(deviceId);
-    allow update, delete: if false;
+    allow read, delete: if isOwner(deviceId);
+    allow update: if false;
    }
    match /liveAudio/{sessionId} {
     allow read: if isOwner(deviceId) || isCollector(deviceId);
