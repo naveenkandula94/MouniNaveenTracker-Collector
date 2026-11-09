@@ -17,7 +17,13 @@ service cloud.firestore {
    allow delete: if isOwner(deviceId);
    match /usageEvents/{eventId} {
     allow create: if isCollector(deviceId) && enrollmentActive(deviceId) && request.resource.data.keys().hasOnly(['eventId','deviceId','eventType','packageName','applicationLabel','eventTimestamp','serverTimestamp','timezone','schemaVersion']) && request.resource.data.eventId == eventId && request.resource.data.deviceId == deviceId && request.resource.data.eventType in ['SCREEN_LOCKED','SCREEN_UNLOCKED'] && request.resource.data.packageName is string && request.resource.data.eventTimestamp is timestamp;
-    allow read: if isOwner(deviceId); allow update, delete: if false;
+    allow read: if isOwner(deviceId);
+    allow delete: if false;
+    // Idempotent overlap rechecks are permitted to refresh the server timestamp,
+    // but cannot change an event type, device, time or other recorded data.
+    allow update: if isCollector(deviceId) && enrollmentActive(deviceId)
+      && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['serverTimestamp'])
+      && request.resource.data.serverTimestamp == request.time;
    }
    match /callLogs/{callId} {
     // Explicitly imported by the signed-in collector, never unrestricted writes.
