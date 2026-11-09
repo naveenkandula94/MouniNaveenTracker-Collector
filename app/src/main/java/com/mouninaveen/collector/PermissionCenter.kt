@@ -112,7 +112,7 @@ internal fun PermissionCenter(
                 Text("${listOf(connected, sharing, usage, phoneGranted && callEnabled,
                     smsGranted && smsEnabled, micGranted, noticeGranted).count { it }} of 7 ready",
                     style = MaterialTheme.typography.titleLarge)
-                Text("Each feature remains under your control.",
+                Text("Permissions and opt-in are ready. This does not confirm Firebase synchronization.",
                     style = MaterialTheme.typography.bodyMedium)
                 Button(modifier = Modifier.fillMaxWidth(), onClick = { confirm = true }) {
                     Text("Set up / review access")
@@ -180,6 +180,8 @@ internal fun PermissionCenter(
                 )
             })
 
+        FirebaseSyncCheck()
+
         ElevatedCard(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.elevatedCardColors(containerColor = Color(0xFFE9F6F0))
@@ -196,13 +198,17 @@ internal fun PermissionCenter(
                     "${SmsBackupWorker.LAST_SUCCESS}_$deviceId", 0L
                 )
                 val lockLast = if (deviceId == null) 0L else basePrefs.getLong(
-                    "last_heartbeat_$deviceId", 0L
+                    "last_lock_success_$deviceId", 0L
+                )
+                val lockAttempt = if (deviceId == null) 0L else basePrefs.getLong(
+                    "last_lock_attempt_$deviceId", 0L
                 )
                 val formatter = remember { SimpleDateFormat("dd MMM HH:mm", Locale.getDefault()) }
                 fun stamp(ts: Long) = if (ts > 0) formatter.format(Date(ts)) else "Not yet"
                 Text("Calls: ${stamp(callLast)}", style = MaterialTheme.typography.bodySmall)
                 Text("Messages: ${stamp(smsLast)}", style = MaterialTheme.typography.bodySmall)
-                Text("Lock: ${stamp(lockLast)}", style = MaterialTheme.typography.bodySmall)
+                Text("Lock last successful check: ${stamp(lockLast)}", style = MaterialTheme.typography.bodySmall)
+                Text("Lock last attempted: ${stamp(lockAttempt)}", style = MaterialTheme.typography.bodySmall)
                 val errors = listOf(
                     "Calls" to callPrefs.getString(CallBackupWorker.LAST_ERROR, "").orEmpty(),
                     "SMS" to smsPrefs.getString(SmsBackupWorker.LAST_ERROR, "").orEmpty(),
@@ -236,7 +242,7 @@ internal fun PermissionCenter(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(enabled = connected && sharing, onClick = {
                         BackgroundSyncCoordinator.syncNow(context)
-                        onStatus("Scheduled an incremental catch-up for enabled backups.")
+                        onStatus("Requested an owner-initiated sync. Check the recorded attempt, success time and errors below after refreshing.")
                     }) { Text("Check sync now") }
                     TextButton(onClick = { refresh++ }) { Text("Refresh") }
                 }
