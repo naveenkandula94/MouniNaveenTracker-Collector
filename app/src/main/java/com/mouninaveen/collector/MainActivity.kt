@@ -131,6 +131,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         refreshCallBackupObserver()
         refreshSmsBackupObserver()
+        BackgroundSyncCoordinator.maintain(this, requestCatchUp = true)
         // While Personal_App is visible, check keyguard events every 15 seconds.
         // Android limits background WorkManager jobs to OS-managed timing.
         startForegroundLockChecks()
@@ -278,14 +279,15 @@ class MainActivity : ComponentActivity() {
                                         onClick = {
                                             prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply()
                                             consent = true
-                                            report("CONSENT", "Sharing enabled by user.")
+                                            BackgroundSyncCoordinator.maintain(this@MainActivity, requestCatchUp = true)
+                                            report("CONSENT", "Sharing enabled; background work scheduled.")
                                         }
                                     ) { Text("Enable sharing") }
                                     OutlinedButton(
                                         onClick = {
                                             prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply()
                                             consent = false
-                                            WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
+                                            BackgroundSyncCoordinator.stopAll(this@MainActivity)
                                             getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).edit().putBoolean(CallBackupWorker.ENABLED, false).apply()
                                             CallBackupWorker.stop(this@MainActivity)
                                             getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
@@ -334,7 +336,7 @@ class MainActivity : ComponentActivity() {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("What is shared", style = MaterialTheme.typography.titleMedium)
                                 Text("• Lock/unlock timestamps with Usage Access and consent\n• Private call backups for your signed-in account only when enabled under Calls\n• Live microphone audio only during an owner-started session\n• Connection and sync diagnostics stay on this phone")
-                                Text("No SMS, WhatsApp chats, Instagram messages, camera or screenshots are collected.", style = MaterialTheme.typography.bodySmall)
+                                Text("SMS backup requires separate enablement in Messages; no WhatsApp, Instagram, camera or screenshots.", style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -368,7 +370,7 @@ class MainActivity : ComponentActivity() {
                                     }) { Text("Copy UID") }
                                     Button(onClick = {
                                         WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
-                                        CallBackupWorker.stop(this@MainActivity)
+                                        BackgroundSyncCoordinator.stopAll(this@MainActivity)
                                         MicrophoneStreamService.stop(this@MainActivity)
                                         auth.signOut()
                                         signedIn = false
@@ -406,7 +408,7 @@ class MainActivity : ComponentActivity() {
                                                                         .getString(SmsBackupWorker.OWNER, "") == uid) {
                                                                     SmsBackupWorker.schedule(this@MainActivity)
                                                                 }
-                                                                if (consent && hasUsageAccess(this@MainActivity)) scheduleSync()
+                                                                BackgroundSyncCoordinator.maintain(this@MainActivity, requestCatchUp = true)
                                                                 report("ENROLL", "Collector enrollment verified.")
                                                             }
                                                         } catch (e: Exception) {
@@ -461,17 +463,9 @@ class MainActivity : ComponentActivity() {
     }
 
     fun scheduleSync() {
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        if (!prefs.getBoolean("consent", false) || !hasUsageAccess(this) ||
-            DeviceBinding.selectedId(this, uid) == null) return
-        val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES)
-            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork("usage-sync", ExistingPeriodicWorkPolicy.UPDATE, request)
-        WorkManager.getInstance(this).enqueue(
-            OneTimeWorkRequestBuilder<UsageSyncWorker>()
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
-        )
+        BackgroundSyncCoordinator.syncNow(this)
     }
+
 }
 
 fun hasUsageAccess(context: Context): Boolean {
