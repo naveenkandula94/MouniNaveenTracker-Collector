@@ -74,15 +74,24 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                             "sdp" to candidate.sdp,
                             "mid" to (candidate.sdpMid ?: ""),
                             "line" to candidate.sdpMLineIndex
-                        ))
+                        )).addOnFailureListener { error ->
+                            onStatus("WebRTC ICE signaling failed: ${error.localizedMessage}")
+                        }
                     },
                     onStatus = { message ->
-                        (context as android.app.Activity).runOnUiThread { connectionState = message }
+                        (context as android.app.Activity).runOnUiThread {
+                            connectionState = message
+                            onStatus(message)
+                        }
                     }
                 )
                 var answerApplied = false
                 val signal = ref.addSnapshotListener { snapshot, error ->
-                    if (error != null) { connectionState = "Signaling error: ${error.localizedMessage}"; return@addSnapshotListener }
+                    if (error != null) {
+                        connectionState = "Signaling error: ${error.localizedMessage}"
+                        onStatus(connectionState)
+                        return@addSnapshotListener
+                    }
                     if (snapshot?.getString("status") == "ENDED") {
                         connectionState = "Session ended. Tap Stop sharing to close."
                     }
@@ -104,7 +113,9 @@ fun LiveMicrophonePublisher(sharingEnabled: Boolean, onStatus: (String) -> Unit)
                 }
                 session = PublisherSession(peer, ref, listOf(signal, ice))
                 peer.createOffer { offer ->
-                    ref.update("offer", offer, "status", "OFFERED")
+                    ref.update("offer", offer, "status", "OFFERED").addOnFailureListener { error ->
+                        onStatus("Could not publish microphone offer: ${error.localizedMessage}")
+                    }
                 }
                 connectionState = "Live microphone sharing started. Keep this screen open."
                 onStatus("Live microphone session created; Admin can now join.")
