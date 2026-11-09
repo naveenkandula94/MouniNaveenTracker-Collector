@@ -32,6 +32,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val context = applicationContext
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         if (!prefs.getBoolean(ENABLED, false) ||
+            !context.getSharedPreferences("collector", Context.MODE_PRIVATE).getBoolean("consent", false) ||
             ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED
         ) return Result.success()
 
@@ -73,6 +74,7 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 val durationIndex = rows.getColumnIndexOrThrow(CallLog.Calls.DURATION)
                 while (rows.moveToNext()) {
                     if (isStopped || !prefs.getBoolean(ENABLED, false) ||
+                        !context.getSharedPreferences("collector", Context.MODE_PRIVATE).getBoolean("consent", false) ||
                         prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid
                     ) return Result.success()
 
@@ -107,7 +109,9 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     if (dateMillis > lastCallTime) newCalls++
                     if (dateMillis > newest) newest = dateMillis
                     if (pending >= 200) {
-                        if (!prefs.getBoolean(ENABLED, false) || prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid) return Result.success()
+                        if (!prefs.getBoolean(ENABLED, false) ||
+                            !context.getSharedPreferences("collector", Context.MODE_PRIVATE).getBoolean("consent", false) ||
+                            prefs.getString(OWNER, "") != FirebaseAuth.getInstance().currentUser?.uid) return Result.success()
                         batch.commit().await()
                         pending = 0
                         batch = database.batch()
