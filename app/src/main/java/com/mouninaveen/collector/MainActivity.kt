@@ -10,6 +10,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -152,12 +153,10 @@ class MainActivity : ComponentActivity() {
                         Text("Calls", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Read recent call records on your phone, review each record, and approve what is shared. Android must grant restricted call-log access.")
                         DeviceCallHistorySharing(consent = consent, onStatus = { report("CALLS", it) })
-                        Text("For user-selected exports:", style = MaterialTheme.typography.labelMedium)
-                        CallHistoryImport(consentToSharing = consent, onStatus = { report("IMPORT", it) })
                     }
                     2 -> {
                         Text("Live audio", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        LiveMicrophonePublisher(sharingEnabled = consent && signedIn, onStatus = { report("AUDIO", it) })
+                        Text("Start or stop your live audio session below. Switching app tabs will not stop an active session.")
                     }
                     3 -> {
                         Text("Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -234,6 +233,18 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
+                }
+                // Keep this composable in the tree across tab switches. Removing it destroyed
+                // the WebRTC peer and caused unexpected CLOSED sessions on tab navigation.
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                        .then(if (tab == 2) Modifier else Modifier.height(0.dp))
+                        .clipToBounds()
+                ) {
+                    LiveMicrophonePublisher(
+                        sharingEnabled = consent && signedIn,
+                        onStatus = { report("AUDIO", it) }
+                    )
                 }
                 if (tab != 4 && status.isNotBlank()) {
                     Text(status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
