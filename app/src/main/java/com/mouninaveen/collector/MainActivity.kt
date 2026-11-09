@@ -13,8 +13,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import androidx.work.*
 import com.google.firebase.auth.FirebaseAuth
@@ -25,93 +27,236 @@ import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); render() }
-    // Preserve Compose state when returning from the CSV picker or Android settings.
-    private fun render() {
-        val auth = FirebaseAuth.getInstance()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = lightColorScheme(primary = androidx.compose.ui.graphics.Color(0xFF70465F), secondary = androidx.compose.ui.graphics.Color(0xFFB08A48))) {
-                var consent by remember { mutableStateOf(prefs.getBoolean("consent", false)) }
-                var usageGranted by remember { mutableStateOf(hasUsageAccess(this@MainActivity)) }
-                var email by remember { mutableStateOf(auth.currentUser?.email.orEmpty()) }
-                var password by remember { mutableStateOf("") }
-                var status by remember { mutableStateOf("Review the disclosure and enable sharing only if you agree.") }
-                var busy by remember { mutableStateOf(false) }
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Text("The Wedding of Mouni & Naveen", style = MaterialTheme.typography.headlineSmall)
-                    Text("MouniNaveen Collector", style = MaterialTheme.typography.titleLarge)
-                    Text("Privacy & sharing controls", style = MaterialTheme.typography.headlineSmall)
-                    Text("Sharing is voluntary and can be withdrawn. No SMS or call-log permissions are requested. Call records may be uploaded only through explicit CSV import and approval.")
-                    Text("WHAT THIS APP SHARES", style = MaterialTheme.typography.titleMedium)
-                    Text("• Device keyguard locked/unlocked events (when Android exposes them).\n• Event date/time and device timezone.\n• Random enrollment document ID and sync status.\n• No app activity tracking.")
-                    Text("WHY AND WHERE", style = MaterialTheme.typography.titleMedium)
-                    Text("Only lock/unlock transitions are sent to the MouniNaveenTracker Firebase project and may be viewed by the administrator who enrolled this device. Android can delay or omit these events; this is not real-time monitoring.")
-                    Text("NOT COLLECTED", style = MaterialTheme.typography.titleMedium)
-                    Text("No app activity, SMS messages, contacts, notification contents, passwords, camera, microphone, screenshots or private files are collected. Call records are shared only when you import and confirm them.")
-                    Text("Android runs periodic sync no more frequently than approximately every 15 minutes; a manual sync request can be queued sooner but is not guaranteed instant. Data may use mobile data. You can stop sharing here at any time. Stopping prevents future collection/uploads; ask the administrator to delete records already uploaded.", style = MaterialTheme.typography.bodySmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(enabled = !consent, onClick = { prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply(); consent = true; status = "Consent saved on this device. Sign in and grant Usage Access to start sync." }) { Text("I consent") }
-                        OutlinedButton(onClick = { prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply(); consent = false; WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); status = "Sharing stopped. Future uploads are disabled. Previously uploaded records remain until deleted by the administrator." }) { Text("Stop sharing") }
+            MaterialTheme(colorScheme = lightColorScheme(
+                primary = androidx.compose.ui.graphics.Color(0xFF3459AD),
+                secondary = androidx.compose.ui.graphics.Color(0xFF178A83),
+                surface = androidx.compose.ui.graphics.Color(0xFFF8FAFF),
+                background = androidx.compose.ui.graphics.Color(0xFFF4F6FC)
+            )) {
+                CollectorScreen()
+            }
+        }
+    }
+
+    @Composable
+    private fun CollectorScreen() {
+        val auth = remember { FirebaseAuth.getInstance() }
+        var signedIn by remember { mutableStateOf(auth.currentUser != null) }
+        var consent by remember { mutableStateOf(prefs.getBoolean("consent", false)) }
+        var usageGranted by remember { mutableStateOf(hasUsageAccess(this@MainActivity)) }
+        var email by remember { mutableStateOf(auth.currentUser?.email.orEmpty()) }
+        var password by remember { mutableStateOf("") }
+        var busy by remember { mutableStateOf(false) }
+        var tab by remember { mutableIntStateOf(0) }
+        var status by remember { mutableStateOf("Select a feature to see its status.") }
+        var diagnosticVersion by remember { mutableIntStateOf(0) }
+        val context = LocalContext.current
+
+        fun report(category: String, message: String) {
+            status = message
+            CollectorDiagnostics.record(context, category, message)
+            diagnosticVersion++
+        }
+
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
+            topBar = {
+                Surface(tonalElevation = 2.dp) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
+                        Text("COLLECTOR", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("Device sharing", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${if (signedIn) "Signed in" else "Not signed in"}  •  ${if (consent) "Sharing enabled" else "Sharing off"}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
-                    HorizontalDivider()
-                    LiveMicrophonePublisher(sharingEnabled = consent && auth.currentUser != null, onStatus = { status = it })
-                    DeviceCallHistorySharing(consent = consent, onStatus = { status = it })
-                    HorizontalDivider()
-                    CallHistoryImport(consentToSharing = consent, onStatus = { status = it })
-                    HorizontalDivider()
-                    Text("Android permission", style = MaterialTheme.typography.titleMedium)
-                    Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
-                    OutlinedButton(onClick = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) { Text("Open Usage Access settings") }
-                    HorizontalDivider()
-                    Text("Collector account", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(email, { email = it }, label = { Text("Collector email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(password, { password = it }, label = { Text("Collector password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Button(enabled = consent && email.isNotBlank() && password.isNotBlank() && !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                        busy = true
-                        auth.signInWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
-                            busy = false
-                            if (task.isSuccessful) {
-                                status = "Signed in. Checking enrollment…"
-                                lifecycleScope.launch {
-                                    try {
-                                        val uid = auth.currentUser?.uid ?: error("No authenticated user")
-                                        val docs = FirebaseFirestore.getInstance().collection("devices").whereEqualTo("collectorUid", uid).get().await()
-                                        if (docs.isEmpty) status = "Signed in, but this account is not enrolled. Ask the administrator to add this Collector UID to a device."
-                                        else if (docs.documents.none { it.getBoolean("enabled") != false }) status = "Enrollment is disabled by the administrator."
-                                        else if (!hasUsageAccess(this@MainActivity)) status = "Signed in. Grant Usage Access to enable collection."
-                                        else { scheduleSync(); status = "Enrolled. Lock/unlock sync is scheduled; Android may delay execution." }
-                                    } catch (e: Exception) { status = "Enrollment check failed: ${e.localizedMessage ?: "Firestore access denied"}" }
+                }
+            },
+            bottomBar = {
+                NavigationBar {
+                    listOf("Home", "Calls", "Live audio", "Account", "Logs").forEachIndexed { index, label ->
+                        NavigationBarItem(
+                            selected = tab == index,
+                            onClick = { tab = index },
+                            icon = {
+                                Text(listOf("⌂","☎","◉","●","≡")[index], style = MaterialTheme.typography.titleMedium)
+                            },
+                            label = { Text(label) },
+                            alwaysShowLabel = true
+                        )
+                    }
+                }
+            }
+        ) { insets ->
+            Column(
+                Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                when (tab) {
+                    0 -> {
+                        Text("Overview", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Sharing controls", style = MaterialTheme.typography.titleMedium)
+                                Text("Your choices control uploads. Live microphone requires a separate start action each session.")
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(
+                                        enabled = !consent,
+                                        onClick = {
+                                            prefs.edit().putBoolean("consent", true).putLong("consent_at", System.currentTimeMillis()).apply()
+                                            consent = true
+                                            report("CONSENT", "Sharing enabled by user.")
+                                        }
+                                    ) { Text("Enable sharing") }
+                                    OutlinedButton(
+                                        onClick = {
+                                            prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply()
+                                            consent = false
+                                            WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
+                                            report("CONSENT", "Sharing stopped. Previously uploaded records require separate deletion.")
+                                        }
+                                    ) { Text("Stop sharing") }
                                 }
-                            } else status = "Sign-in failed: ${task.exception?.localizedMessage ?: "Check account details"}"
+                            }
                         }
-                    }) { Text(if (busy) "Signing in…" else "Sign in") }
-                    if (auth.currentUser != null) {
-                        Text("Account status: Signed in (${auth.currentUser?.email ?: ""})")
-                        Text("Collector UID: ${auth.currentUser?.uid.orEmpty()}")
-                        OutlinedButton(onClick = {
-                            (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
-                                .setPrimaryClip(android.content.ClipData.newPlainText("Collector UID", auth.currentUser?.uid.orEmpty()))
-                            status = "Collector UID copied. Enroll this UID in the Admin app."
-                        }) { Text("Copy Collector UID") }
-                        OutlinedButton(onClick = { WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync"); auth.signOut(); password = ""; status = "Signed out. Collection will not run until you sign in again." }) { Text("Sign out") }
-                    } else Text("Account status: Not signed in")
-                    Text("Sharing: ${if (consent) "Consent given" else "Stopped / not consented"} · Usage Access: ${if (usageGranted) "Granted" else "Missing"}")
-                    Text(status)
-                    Button(onClick = { usageGranted = hasUsageAccess(this@MainActivity); if (consent && auth.currentUser != null && usageGranted) { scheduleSync(); status = "Lock/unlock sync queued. Android controls exact timing." } }) { Text("Refresh permission and sync status") }
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Device status", style = MaterialTheme.typography.titleMedium)
+                                Text("Account: ${if (signedIn) "Connected" else "Sign-in required"}")
+                                Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
+                                Text("Last event upload: Android-managed; not guaranteed instant")
+                                OutlinedButton(onClick = {
+                                    usageGranted = hasUsageAccess(this@MainActivity)
+                                    if (consent && signedIn && usageGranted) {
+                                        scheduleSync()
+                                        report("SYNC", "Lock/unlock sync queued.")
+                                    } else report("SYNC", "Sync requires sign-in, consent, and Usage Access.")
+                                }) { Text("Refresh and sync now") }
+                                TextButton(onClick = { startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }) {
+                                    Text("Open Usage Access settings")
+                                }
+                            }
+                        }
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("What is shared", style = MaterialTheme.typography.titleMedium)
+                                Text("• Lock/unlock timestamps with Usage Access and consent\n• Only call records explicitly selected and approved under Calls\n• Live microphone audio only during an owner-started session\n• Connection and sync diagnostics stay on this phone")
+                                Text("No SMS, WhatsApp chats, Instagram messages, camera or screenshots are collected.", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                    1 -> {
+                        Text("Calls", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Read recent call records on your phone, review each record, and approve what is shared. Android must grant restricted call-log access.")
+                        DeviceCallHistorySharing(consent = consent, onStatus = { report("CALLS", it) })
+                        Text("For user-selected exports:", style = MaterialTheme.typography.labelMedium)
+                        CallHistoryImport(consentToSharing = consent, onStatus = { report("IMPORT", it) })
+                    }
+                    2 -> {
+                        Text("Live audio", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        LiveMicrophonePublisher(sharingEnabled = consent && signedIn, onStatus = { report("AUDIO", it) })
+                    }
+                    3 -> {
+                        Text("Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (signedIn) {
+                                    Text("Signed in as ${auth.currentUser?.email.orEmpty()}")
+                                    Text("Collector UID", style = MaterialTheme.typography.labelLarge)
+                                    Text(auth.currentUser?.uid.orEmpty(), style = MaterialTheme.typography.bodySmall)
+                                    OutlinedButton(onClick = {
+                                        (getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                                            .setPrimaryClip(android.content.ClipData.newPlainText("Collector UID", auth.currentUser?.uid.orEmpty()))
+                                        report("ACCOUNT", "Collector UID copied for enrollment.")
+                                    }) { Text("Copy UID") }
+                                    Button(onClick = {
+                                        WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
+                                        auth.signOut()
+                                        signedIn = false
+                                        password = ""
+                                        report("ACCOUNT", "Signed out; sharing sessions will close.")
+                                    }) { Text("Sign out") }
+                                } else {
+                                    Text("Sign in to your enrolled Firebase account.")
+                                    OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    Button(
+                                        enabled = !busy && email.isNotBlank() && password.isNotBlank(),
+                                        onClick = {
+                                            busy = true
+                                            auth.signInWithEmailAndPassword(email.trim(), password).addOnCompleteListener { task ->
+                                                busy = false
+                                                if (task.isSuccessful) {
+                                                    signedIn = true
+                                                    password = ""
+                                                    report("ACCOUNT", "Signed in. Checking Collector enrollment.")
+                                                    lifecycleScope.launch {
+                                                        try {
+                                                            val uid = auth.currentUser?.uid ?: error("Authentication missing")
+                                                            val docs = FirebaseFirestore.getInstance().collection("devices").whereEqualTo("collectorUid", uid).get().await()
+                                                            if (docs.isEmpty) report("ENROLL", "No enrolled device for this UID. Enroll from Admin > Devices.")
+                                                            else if (docs.documents.none { it.getBoolean("enabled") != false }) report("ENROLL", "All enrolled devices disabled.")
+                                                            else {
+                                                                if (consent && hasUsageAccess(this@MainActivity)) scheduleSync()
+                                                                report("ENROLL", "Collector enrollment verified.")
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            report("ERROR", "Enrollment check: ${e.localizedMessage ?: "Firestore rules denied read"}")
+                                                        }
+                                                    }
+                                                } else report("ERROR", "Sign-in failed: ${task.exception?.localizedMessage ?: "Unknown error"}")
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Text(if (busy) "Signing in…" else "Sign in") }
+                                }
+                            }
+                        }
+                    }
+                    else -> {
+                        Text("Diagnostic logs", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("App-private diagnostic events. No phone numbers, passwords, audio or message contents are logged.")
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Last status: $status", style = MaterialTheme.typography.bodyMedium)
+                                key(diagnosticVersion) {
+                                    Text(CollectorDiagnostics.read(context), style = MaterialTheme.typography.bodySmall)
+                                }
+                                OutlinedButton(onClick = {
+                                    CollectorDiagnostics.clear(context)
+                                    diagnosticVersion++
+                                    status = "Diagnostics cleared."
+                                }) { Text("Clear local logs") }
+                                OutlinedButton(onClick = { diagnosticVersion++ }) { Text("Refresh logs") }
+                            }
+                        }
+                    }
+                }
+                if (tab != 4 && status.isNotBlank()) {
+                    Text(status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
     }
+
     private fun scheduleSync() {
         if (!prefs.getBoolean("consent", false) || !hasUsageAccess(this) || FirebaseAuth.getInstance().currentUser == null) return
-        val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES).setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
+        val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES)
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork("usage-sync", ExistingPeriodicWorkPolicy.UPDATE, request)
-        WorkManager.getInstance(this).enqueue(OneTimeWorkRequestBuilder<UsageSyncWorker>().setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build())
+        WorkManager.getInstance(this).enqueue(
+            OneTimeWorkRequestBuilder<UsageSyncWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
+        )
     }
 }
 
 fun hasUsageAccess(context: Context): Boolean {
     val ops = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-    @Suppress("DEPRECATION") val mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
+    @Suppress("DEPRECATION")
+    val mode = ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), context.packageName)
     return mode == AppOpsManager.MODE_ALLOWED
 }
