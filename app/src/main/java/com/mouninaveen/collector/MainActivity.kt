@@ -5,6 +5,7 @@ import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
+import android.provider.Telephony
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
@@ -18,6 +19,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.material3.*
@@ -44,6 +46,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private var callChangeObserver: ContentObserver? = null
+    private var smsChangeObserver: ContentObserver? = null
     private var foregroundLockJob: Job? = null
     private var screenStateReceiver: BroadcastReceiver? = null
 
@@ -99,9 +102,35 @@ class MainActivity : ComponentActivity() {
         contentResolver.registerContentObserver(CallLog.Calls.CONTENT_URI, true, callChangeObserver!!)
     }
 
+    /** Observe SMS changes only after explicit user enablement and Android permission. */
+    fun refreshSmsBackupObserver() {
+        smsChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
+        smsChangeObserver = null
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) !=
+            PackageManager.PERMISSION_GRANTED) return
+        val smsPrefs = getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
+        val uid = FirebaseAuth.getInstance().currentUser?.uid
+        if (uid == null || !smsPrefs.getBoolean(SmsBackupWorker.ENABLED, false) ||
+            smsPrefs.getString(SmsBackupWorker.OWNER, "") != uid ||
+            DeviceBinding.selectedId(this, uid) == null) return
+        SmsBackupWorker.schedule(this)
+        smsChangeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                if (!selfChange && smsPrefs.getBoolean(SmsBackupWorker.ENABLED, false) &&
+                    FirebaseAuth.getInstance().currentUser?.uid == uid) {
+                    SmsBackupWorker.trigger(this@MainActivity)
+                }
+            }
+        }
+        contentResolver.registerContentObserver(
+            Telephony.Sms.CONTENT_URI, true, smsChangeObserver!!
+        )
+    }
+
     override fun onResume() {
         super.onResume()
         refreshCallBackupObserver()
+        refreshSmsBackupObserver()
         // While Personal_App is visible, check keyguard events every 15 seconds.
         // Android limits background WorkManager jobs to OS-managed timing.
         startForegroundLockChecks()
@@ -112,6 +141,8 @@ class MainActivity : ComponentActivity() {
         foregroundLockJob = null
         callChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
         callChangeObserver = null
+        smsChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
+        smsChangeObserver = null
         super.onPause()
     }
 
@@ -174,7 +205,7 @@ class MainActivity : ComponentActivity() {
             val uid = auth.currentUser?.uid
             if (signedIn && uid != null &&
                 DeviceBinding.selectedId(this@MainActivity, uid) == null) {
-                tab = 3
+                tab = 4
                 status = "Please select THIS phone under Account before syncing begins."
             }
         }
@@ -211,16 +242,21 @@ class MainActivity : ComponentActivity() {
             },
             bottomBar = {
                 NavigationBar {
-                    listOf("Home", "Calls", "Live audio", "Account", "Logs").forEachIndexed { index, label ->
-                        NavigationBarItem(
-                            selected = tab == index,
-                            onClick = { tab = index },
-                            icon = {
-                                Text(listOf("⌂","☎","◉","●","≡")[index], style = MaterialTheme.typography.titleMedium)
-                            },
-                            label = { Text(label) },
-                            alwaysShowLabel = true
-                        )
+                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+                        listOf("Home", "Calls", "Messages", "Live", "Account", "Logs")
+                            .forEachIndexed { index, label ->
+                                NavigationBarItem(
+                                    modifier = Modifier.width(84.dp),
+                                    selected = tab == index,
+                                    onClick = { tab = index },
+                                    icon = {
+                                        Text(listOf("⌂","☎","✉","◉","●","≡")[index],
+                                            style = MaterialTheme.typography.titleMedium)
+                                    },
+                                    label = { Text(label, maxLines = 1) },
+                                    alwaysShowLabel = true
+                                )
+                            }
                     }
                 }
             }
@@ -252,7 +288,11 @@ class MainActivity : ComponentActivity() {
                                             WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
                                             getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).edit().putBoolean(CallBackupWorker.ENABLED, false).apply()
                                             CallBackupWorker.stop(this@MainActivity)
+                                            getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
+                                                .edit().putBoolean(SmsBackupWorker.ENABLED, false).apply()
+                                            SmsBackupWorker.stop(this@MainActivity)
                                             refreshCallBackupObserver()
+                                            refreshSmsBackupObserver()
                                             report("CONSENT", "All sharing and automatic call backup disabled. Existing private backup can be deleted under Calls.")
                                         }
                                     ) { Text("Stop sharing") }
@@ -303,10 +343,15 @@ class MainActivity : ComponentActivity() {
                         PrivateCallBackup(onStatus = { report("BACKUP", it) })
                     }
                     2 -> {
+                        Text("Messages", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Owner-controlled SMS backup. Android must grant restricted SMS access.")
+                        PrivateSmsBackup(onStatus = { report("SMS", it) })
+                    }
+                    3 -> {
                         Text("Live audio", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Start or stop your live audio session below. Switching app tabs will not stop an active session.")
                     }
-                    3 -> {
+                    4 -> {
                         Text("Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         ElevatedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -353,6 +398,12 @@ class MainActivity : ComponentActivity() {
                                                                     getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).getString(CallBackupWorker.OWNER, "") == uid) {
                                                                     CallBackupWorker.schedule(this@MainActivity)
                                                                 }
+                                                                if (getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
+                                                                        .getBoolean(SmsBackupWorker.ENABLED, false) &&
+                                                                    getSharedPreferences(SmsBackupWorker.PREFS, MODE_PRIVATE)
+                                                                        .getString(SmsBackupWorker.OWNER, "") == uid) {
+                                                                    SmsBackupWorker.schedule(this@MainActivity)
+                                                                }
                                                                 if (consent && hasUsageAccess(this@MainActivity)) scheduleSync()
                                                                 report("ENROLL", "Collector enrollment verified.")
                                                             }
@@ -392,7 +443,7 @@ class MainActivity : ComponentActivity() {
                 // the WebRTC peer and caused unexpected CLOSED sessions on tab navigation.
                 Box(
                     modifier = Modifier.fillMaxWidth()
-                        .then(if (tab == 2) Modifier else Modifier.height(0.dp))
+                        .then(if (tab == 3) Modifier else Modifier.height(0.dp))
                         .clipToBounds()
                 ) {
                     LiveMicrophonePublisher(
@@ -400,7 +451,7 @@ class MainActivity : ComponentActivity() {
                         onStatus = { report("AUDIO", it) }
                     )
                 }
-                if (tab != 4 && status.isNotBlank()) {
+                if (tab != 5 && status.isNotBlank()) {
                     Text(status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                 }
             }
