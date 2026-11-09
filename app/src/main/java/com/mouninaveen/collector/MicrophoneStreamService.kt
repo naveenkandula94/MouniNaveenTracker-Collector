@@ -154,11 +154,12 @@ class MicrophoneStreamService : Service() {
     private fun recordPeerStatus(message: String, generation: Int) {
         if (!isStarted || generation != sessionId) return
         MicStreamStatus.status(message)
-        if (message.endsWith("CONNECTED") || message.endsWith("COMPLETED")) {
+        val connectionState = message.substringAfterLast(": ").trim()
+        if (connectionState == "CONNECTED" || connectionState == "COMPLETED") {
             reconnectAttempts = 0
             reconnectJob?.cancel()
             reconnectJob = null
-        } else if (message.endsWith("DISCONNECTED") || message.endsWith("FAILED")) {
+        } else if (connectionState == "DISCONNECTED" || connectionState == "FAILED") {
             if (reconnectJob?.isActive == true) return
             if (reconnectAttempts >= 3) {
                 MicStreamStatus.status(
@@ -169,7 +170,7 @@ class MicrophoneStreamService : Service() {
             val pendingGeneration = sessionId
             reconnectJob = scope.launch {
                 // Give WebRTC a chance to recover transient mobile handovers itself.
-                delay(if (message.endsWith("DISCONNECTED")) 15_000L else 5_000L)
+                delay(if (connectionState == "DISCONNECTED") 15_000L else 5_000L)
                 if (!isStarted || pendingGeneration != sessionId) return@launch
                 reconnectAttempts++
                 MicStreamStatus.status(
