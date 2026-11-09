@@ -115,8 +115,8 @@ class MainActivity : ComponentActivity() {
             topBar = {
                 Surface(tonalElevation = 2.dp) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
-                        Text("COLLECTOR", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        Text("Device sharing", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("PERSONAL APP", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("My phone", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                         Text(
                             "${if (signedIn) "Signed in" else "Not signed in"}  •  ${if (consent) "Sharing enabled" else "Sharing off"}",
                             style = MaterialTheme.typography.bodySmall
@@ -215,6 +215,7 @@ class MainActivity : ComponentActivity() {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 if (signedIn) {
                                     Text("Signed in as ${auth.currentUser?.email.orEmpty()}")
+                                    PhoneSelection(onStatus = { report("DEVICE", it) })
                                     Text("Collector UID", style = MaterialTheme.typography.labelLarge)
                                     Text(auth.currentUser?.uid.orEmpty(), style = MaterialTheme.typography.bodySmall)
                                     OutlinedButton(onClick = {
