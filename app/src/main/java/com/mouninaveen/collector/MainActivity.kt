@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import android.content.Context
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -30,12 +32,41 @@ import androidx.work.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.tasks.await
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private var callChangeObserver: ContentObserver? = null
+    private var foregroundLockJob: Job? = null
+    private var screenStateReceiver: BroadcastReceiver? = null
+
+    private fun queueLockCheck() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (!prefs.getBoolean("consent", false) || !hasUsageAccess(this) ||
+            DeviceBinding.selectedId(this, uid) == null) return
+        val work = OneTimeWorkRequestBuilder<UsageSyncWorker>()
+            .setConstraints(Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        WorkManager.getInstance(this).enqueueUniqueWork(
+            "lock-check-auto", ExistingWorkPolicy.KEEP, work
+        )
+    }
+
+    private fun startForegroundLockChecks() {
+        foregroundLockJob?.cancel()
+        foregroundLockJob = lifecycleScope.launch {
+            while (isActive) {
+                queueLockCheck()
+                delay(15_000L)
+            }
+        }
+    }
+
 
     /**
      * Observe phone call-log changes only while this Activity is visible.
@@ -68,9 +99,14 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshCallBackupObserver()
+        // While Personal_App is visible, check keyguard events every 15 seconds.
+        // Android limits background WorkManager jobs to OS-managed timing.
+        startForegroundLockChecks()
     }
 
     override fun onPause() {
+        foregroundLockJob?.cancel()
+        foregroundLockJob = null
         callChangeObserver?.let { contentResolver.unregisterContentObserver(it) }
         callChangeObserver = null
         super.onPause()
@@ -78,6 +114,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A process-alive screen transition queues a fresh usage-events check.
+        // This is best effort, not a permanent background 15-second service.
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action in listOf(
+                        Intent.ACTION_SCREEN_OFF, Intent.ACTION_SCREEN_ON,
+                        Intent.ACTION_USER_PRESENT
+                    )) queueLockCheck()
+            }
+        }
+        screenStateReceiver = receiver
+        ContextCompat.registerReceiver(
+            this, receiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         setContent {
             MaterialTheme(colorScheme = lightColorScheme(
                 primary = androidx.compose.ui.graphics.Color(0xFF3459AD),
@@ -88,6 +144,13 @@ class MainActivity : ComponentActivity() {
                 CollectorScreen()
             }
         }
+    }
+
+    override fun onDestroy() {
+        screenStateReceiver?.let { unregisterReceiver(it) }
+        screenStateReceiver = null
+        foregroundLockJob?.cancel()
+        super.onDestroy()
     }
 
     @Composable
@@ -150,7 +213,7 @@ class MainActivity : ComponentActivity() {
                         ElevatedCard(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("Sharing controls", style = MaterialTheme.typography.titleMedium)
-                                Text("Your choices control uploads. Live microphone requires a separate start action each session.")
+                                Text("Choose this phone in Account. Lock/unlock checks run automatically with consent and Usage Access. Live microphone requires a separate start action.")
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(
                                         enabled = !consent,
@@ -178,8 +241,12 @@ class MainActivity : ComponentActivity() {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("Device status", style = MaterialTheme.typography.titleMedium)
                                 Text("Account: ${if (signedIn) "Connected" else "Sign-in required"}")
+                                Text(
+                                    "Selected phone: ${auth.currentUser?.uid?.let { DeviceBinding.selectedId(context, it) } ?: "Not selected — choose in Account"}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
                                 Text("Usage Access: ${if (usageGranted) "Granted" else "Not granted"}")
-                                Text("Last event upload: Android-managed; not guaranteed instant")
+                                Text("Auto lock check: 15 seconds while Personal_App is visible; Android-managed background checks.")
                                 OutlinedButton(onClick = {
                                     usageGranted = hasUsageAccess(this@MainActivity)
                                     if (consent && signedIn && usageGranted) {
@@ -310,8 +377,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun scheduleSync() {
-        if (!prefs.getBoolean("consent", false) || !hasUsageAccess(this) || FirebaseAuth.getInstance().currentUser == null) return
+    fun scheduleSync() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (!prefs.getBoolean("consent", false) || !hasUsageAccess(this) ||
+            DeviceBinding.selectedId(this, uid) == null) return
         val request = PeriodicWorkRequestBuilder<UsageSyncWorker>(15, TimeUnit.MINUTES)
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork("usage-sync", ExistingPeriodicWorkPolicy.UPDATE, request)
