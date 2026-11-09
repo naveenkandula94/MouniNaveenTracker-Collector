@@ -165,7 +165,10 @@ class MainActivity : ComponentActivity() {
                                             prefs.edit().putBoolean("consent", false).putLong("last_sync", System.currentTimeMillis()).apply()
                                             consent = false
                                             WorkManager.getInstance(this@MainActivity).cancelUniqueWork("usage-sync")
-                                            report("CONSENT", "Sharing stopped. Previously uploaded records require separate deletion.")
+                                            getSharedPreferences(CallBackupWorker.PREFS, MODE_PRIVATE).edit().putBoolean(CallBackupWorker.ENABLED, false).apply()
+                                            CallBackupWorker.stop(this@MainActivity)
+                                            refreshCallBackupObserver()
+                                            report("CONSENT", "All sharing and automatic call backup disabled. Existing private backup can be deleted under Calls.")
                                         }
                                     ) { Text("Stop sharing") }
                                 }
