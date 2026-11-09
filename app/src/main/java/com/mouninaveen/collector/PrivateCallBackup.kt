@@ -37,23 +37,29 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
     fun turnOn() {
         val uid = auth.currentUser?.uid
         if (uid == null) {
-            onStatus("Sign in on the Account tab before enabling private backup.")
+            onStatus("Sign in on Account before enabling backup.")
             return
         }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
-            onStatus("Call-log permission not available. Android may restrict READ_CALL_LOG.")
+            onStatus("Call-log permission unavailable.")
             return
         }
-        prefs.edit()
-            .putBoolean(CallBackupWorker.ENABLED, true)
-            .putString(CallBackupWorker.OWNER, uid)
-            .putLong(CallBackupWorker.LAST_CALL_DATE, 0L)
-            .putLong(CallBackupWorker.LAST_SUCCESS, 0L)
-            .apply()
-        enabled = true
-        CallBackupWorker.schedule(context)
-        (context as? MainActivity)?.refreshCallBackupObserver()
-        onStatus("Private automatic call-history backup enabled for your signed-in account.")
+        busy = true
+        scope.launch {
+            try {
+                val device = DeviceBinding.resolve(context, uid)
+                prefs.edit()
+                    .putBoolean(CallBackupWorker.ENABLED, true)
+                    .putString(CallBackupWorker.OWNER, uid)
+                    .apply()
+                enabled = true
+                CallBackupWorker.schedule(context)
+                (context as? MainActivity)?.refreshCallBackupObserver()
+                onStatus("Automatic backup enabled for ${device.getString("displayName") ?: "this phone"}.")
+            } catch (e: Exception) {
+                onStatus("Select this phone in Account first: ${e.localizedMessage}")
+            } finally { busy = false }
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -64,6 +70,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
 
     val currentOwner = auth.currentUser?.uid
     val ownerMatches = currentOwner != null && prefs.getString(CallBackupWorker.OWNER, "") == currentOwner
+    val selectedDeviceId = currentOwner?.let { DeviceBinding.selectedId(context, it) }
     val lastSuccess = prefs.getLong(CallBackupWorker.LAST_SUCCESS, 0L)
     val lastError = prefs.getString(CallBackupWorker.LAST_ERROR, "").orEmpty()
     val lastCount = prefs.getInt(CallBackupWorker.LAST_COUNT, 0)
@@ -76,6 +83,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                 "This is not shared with another Admin account. You can disable or delete your backup anytime.",
                 style = MaterialTheme.typography.bodyMedium
             )
+            Text("Phone: ${selectedDeviceId ?: "Not selected — choose this phone in Account"}", style = MaterialTheme.typography.bodySmall)
             Text("Permission: ${if (permission) "Granted" else "Not granted / restricted"}")
             Text("Backup: ${if (enabled && ownerMatches) "Enabled" else if (enabled) "Paused — sign in to the original account" else "Off"}")
             if (lastSuccess > 0L) {
@@ -122,7 +130,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                 Text("Refresh backup status")
             }
             if (deletionConfirm) {
-                Text("Delete ALL private call backups for your current account? This cannot be undone.", color = MaterialTheme.colorScheme.error)
+                Text("Delete private call backups for THIS selected phone? This cannot be undone.", color = MaterialTheme.colorScheme.error)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { deletionConfirm = false }) { Text("Cancel") }
                     Button(enabled = !busy && auth.currentUser != null && ownerMatches, onClick = {
@@ -134,8 +142,11 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                                 prefs.edit().putBoolean(CallBackupWorker.ENABLED, false).apply()
                                 CallBackupWorker.stop(context)
                                 enabled = false
+                                val deviceId = DeviceBinding.selectedId(context, uid)
+                                    ?: error("Choose this phone in Account.")
                                 val collection = FirebaseFirestore.getInstance()
-                                    .collection("users").document(uid).collection("callBackups")
+                                    .collection("users").document(uid)
+                                    .collection("deviceCallBackups").document(deviceId).collection("calls")
                                 var deleted = 0
                                 while (true) {
                                     val docs = collection.limit(250).get().await().documents
@@ -145,7 +156,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                                     batch.commit().await()
                                     deleted += docs.size
                                 }
-                                prefs.edit().remove(CallBackupWorker.LAST_CALL_DATE)
+                                prefs.edit().remove("${CallBackupWorker.LAST_CALL_DATE}_$deviceId")
                                     .remove(CallBackupWorker.LAST_SUCCESS)
                                     .remove(CallBackupWorker.LAST_COUNT).apply()
                                 onStatus("Deleted $deleted private backup records from Firebase.")
@@ -160,8 +171,8 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                     }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Delete all") }
                 }
             } else {
-                TextButton(enabled = !busy && auth.currentUser != null && ownerMatches, onClick = { deletionConfirm = true }) {
-                    Text("Delete all my private call backups", color = MaterialTheme.colorScheme.error)
+                TextButton(enabled = !busy && auth.currentUser != null && ownerMatches && selectedDeviceId != null, onClick = { deletionConfirm = true }) {
+                    Text("Delete this phone’s private call backups", color = MaterialTheme.colorScheme.error)
                 }
             }
         }
