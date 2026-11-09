@@ -165,16 +165,19 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
         private const val PERIODIC = "private-call-backup-periodic"
         private const val ONE_TIME = "private-call-backup-now"
 
-        fun schedule(context: Context) {
+        fun schedule(context: Context, requestNow: Boolean = true) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             if (!prefs.getBoolean(ENABLED, false)) return
             val constraints = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 PERIODIC, ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<CallBackupWorker>(15, TimeUnit.MINUTES)
-                    .setConstraints(constraints).build()
+                    .setConstraints(constraints)
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                    ).build()
             )
-            trigger(context)
+            if (requestNow) trigger(context)
         }
 
         fun trigger(context: Context) {
@@ -182,8 +185,11 @@ class CallBackupWorker(context: Context, params: WorkerParameters) : CoroutineWo
             WorkManager.getInstance(context).enqueueUniqueWork(
                 ONE_TIME, ExistingWorkPolicy.KEEP,
                 OneTimeWorkRequestBuilder<CallBackupWorker>()
-                    .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                    .build()
+                    .setConstraints(Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED).build())
+                    .setBackoffCriteria(
+                        androidx.work.BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS
+                    ).build()
             )
         }
 
