@@ -24,7 +24,13 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
             val device = DeviceBinding.resolve(applicationContext, uid)
             val deviceId = device.id
             val now = System.currentTimeMillis()
-            val from = prefs.getLong("last_sync", now - 24L * 60 * 60 * 1000).coerceAtMost(now - 60_000)
+            // Different phones share a Firebase UID, but never share an event cursor.
+            // First scan asks Android for its available keyguard events over 7 days.
+            // Future runs scan only the new interval with a short overlap for reliability.
+            val cursorKey = "last_sync_$deviceId"
+            val lastSuccess = prefs.getLong(cursorKey, 0L)
+            val from = if (lastSuccess == 0L) now - 7L * 24 * 60 * 60 * 1000
+                       else (lastSuccess - 60_000L).coerceAtMost(now - 60_000L)
             val manager = applicationContext.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
             val events = manager.queryEvents(from, now)
             val event = UsageEvents.Event()
@@ -66,7 +72,7 @@ class UsageSyncWorker(context: Context, params: WorkerParameters) : CoroutineWor
                 ).await()
                 prefs.edit().putLong("last_heartbeat_$deviceId", now).apply()
             }
-            prefs.edit().putLong("last_sync", now).apply()
+            prefs.edit().putLong(cursorKey, now).apply()
             if (batchRecords.isEmpty() &&
                 now - prefs.getLong("last_no_event_log_$deviceId", 0L) >= 5 * 60_000L) {
                 CollectorDiagnostics.record(
