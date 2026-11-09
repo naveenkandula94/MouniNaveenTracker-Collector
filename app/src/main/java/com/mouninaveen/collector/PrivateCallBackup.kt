@@ -52,6 +52,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
             .apply()
         enabled = true
         CallBackupWorker.schedule(context)
+        (context as? MainActivity)?.refreshCallBackupObserver()
         onStatus("Private automatic call-history backup enabled for your signed-in account.")
     }
 
@@ -98,6 +99,7 @@ fun PrivateCallBackup(onStatus: (String) -> Unit) {
                     onClick = {
                         prefs.edit().putBoolean(CallBackupWorker.ENABLED, false).apply()
                         CallBackupWorker.stop(context)
+                        (context as? MainActivity)?.refreshCallBackupObserver()
                         enabled = false
                         onStatus("Private call backup disabled. Existing backup remains until you delete it.")
                     }
